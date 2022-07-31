@@ -1,4 +1,23 @@
-## git
+## git--draft
+
+### config user and email
+
+gayhub 推送代码前一定要设置`user`and`email`，否则会默认使用域账号或主机名信息，这样会导致信息泄漏！！！
+
+```bash
+$ git config --global --list
+credential.http://10.156.23.50.provider=generic
+user.name=chandler
+
+$ git config --global user.email "chandler@bgyq.com"
+
+$ git config --global --list
+credential.http://10.156.23.50.provider=generic
+user.name=chandler
+user.email=chandler@bgyq.com
+```
+
+
 
 ### 远程仓库重命名
 
