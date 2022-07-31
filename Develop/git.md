@@ -1,0 +1,27 @@
+## git
+
+### 远程仓库重命名
+
+```bash
+#The default branch has been renamed!
+#dev is now named main
+
+#If you have a local clone, you can update it by running the following commands.
+
+git branch -m dev main
+git fetch origin
+git branch -u origin/main main
+git remote set-head origin -a
+```
+
+### rebase不连续commit
+
+这样做，有大量的conflict！！！
+
+1. 使用git rebase -i <需要合并的commit中最早的那个commit的前一个commit-ID>，启动rebase操作。
+
+2. 进入到编辑页面，手动调整提交的顺序，将需要合并的提交放到一起，需要保留的commit前面使用pick，需要合并的commit前面使用s或squash，紧跟在两个要合并的commit中需要保留的那个commit后面。
+
+   即先`yy`指令复制`pick commit_ID`到指定位置，然后把`pick`换成`s`或`f`，实现合并
+
+3. 弹出commit信息页面，需要手动修改合并后的commit信息。
