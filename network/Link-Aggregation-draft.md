@@ -9,6 +9,39 @@
 *  二层聚合组/二层聚合接口：二层聚合组的成员端口全部为二层以太网接口，其对应的聚合接口称为二层聚合接口（Bridge-aggregation Interface，BAGG）。
 * 三层聚合组/三层聚合接口：三层聚合组的成员端口全部为三层以太网接口，其对应的聚合接口称为三层聚合接口（Route-aggregation Interface，RAGG）。
 
+#### vlan 0
+
+vlan默认范围是1-4094，0是保留位，做了链路聚合的接口，对外只显示聚合口`Eth-Trunk`（作策略或修改vlan tag都是针对聚合口），聚合成员端口没有意义了，所以vlan ID就为0了。
+
+```bash
+[Huawei]display vlan brief
+U:Up;D:Down;TG:Tagged;UT:Untagged;
+# eth0和eth1已经不属于默认 vlan 1了
+VID  Name             Status  Ports                                             
+--------------------------------------------------------------------------------
+1                     enable  UT: Eth-Trunk1(U) Eth0/0/2(U) Eth0/0/3(D)         
+                                  Eth0/0/4(D) Eth0/0/5(D) Eth0/0/6(D)           
+                                  Eth0/0/7(D)                                   
+```
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vlan-0.jpg)
+
+
+
+#### pro.
+
+采用链路聚合技术可以在不进行硬件升级的条件下，通过将多个物理接口捆绑为一个逻辑接口，来达到增加链路带宽的目的。在实现增大带宽目的的同时，链路聚合采用备份链路的机制，还可以有效的提高设备之间的链路可靠性。
+
+还可以通过链路聚合减少环路？
+
+#### manual
+
+手动配置只能显示本设备聚合成员端口是否故障(up or down)，无法检测整个链路是否故障即无法判断链路途径的其他端口是否正常、
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/manual-and-lacp.png)
+
+
+
 #### LAG
 
 链路聚合组LAG（Link Aggregation Group）是指将若干条以太链路捆绑在一起形成一条逻辑链路，也称Eth-Trunk链路。每个聚合组对应一个链路聚合接口或Eth-Trunk接口，组成Eth-Trunk接口的各个物理接口称为成员接口，成员接口对应的链路称为成员链路。链路聚合接口可以作为普通的以太网接口来使用，与普通以太网接口的差别在于：转发的时候链路聚合组需要从成员接口中选择一个或多个接口来进行数据转发。
@@ -33,6 +66,8 @@ LAG主要有两种模式，分别是手工模式和LACP模式。
 #### LACP
 
 LACP（Link Aggregation Control Protocol，链路聚合控制协议）是一种基于IEEE802.3ad标准的实现链路动态聚合与解聚合的协议，它是链路聚合中常用的一种协议。链路聚合组中启用了LACP协议的成员端口通过发送LACPDU报文进行交互，双方对哪些端口能够发送和接收报文达成一致，确定承担业务流量的链路。此外，当聚合条件发生变化时，如某个链路发生故障，LACP模式会自动调整聚合组中的链路，组内其他可用成员链路接替故障链路维持负载平衡。这样在不进行硬件升级的情况下，可以增加设备之间的逻辑带宽，提高网络的可靠性。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/LACP模式-MN.png)
 
 ##### LACP模式对数据传输更加稳定和可靠
 
@@ -67,6 +102,38 @@ LACP主要工作主要包含互发LACPDU报文、确定主动端、确定活动�
 LACP和PAgP（Port Aggregation Protocol，端口汇聚协议）是链路聚合中使用最广泛的两种协商协议。LACP和PAgP的功能类似，都是通过捆绑链路并协商成员链路之间的流量提高网络的可用性和稳定性。LACP和PAgP数据包在交换机之间通过支持以太网通道的端口交换。
 
 它们之间最大的区别是支持的供应商不同，LACP是开放标准，可以在大多数交换机上运行，如华为S5700系列交换机，而PAgP是Cisco专有协议，只能在Cisco或支持PAgP的第三方交换机上运行。
+
+### Linux 网卡聚合
+
+https://www.xingdp.com/post/7.html
+
+```bash
+## 创建聚合口
+[Huawei]interface Eth-Trunk 1
+[Huawei-Eth-Trunk1]quit
+[Huawei]
+
+## 设置端口带宽并将端口加入聚合口
+[Huawei-Eth-Trunk1]interface GigabitEthernet0/0/0
+[Huawei-GigabitEthernet0/0/0]bandwidth 6000
+[Huawei-GigabitEthernet0/0/0]eth-trunk 1
+Info: This operation may take a few seconds. Please wait for a moment...
+Error: The layer-3 interface can not add into a layer-2 trunk.done.
+## 三转二失败了
+[Huawei-GigabitEthernet0/0/0]portswitch 
+
+## 将ethernet0/0/0加入聚合
+[Huawei]interface Ethernet0/0/0	
+[Huawei-Ethernet0/0/0]eth-trunk 1
+[Huawei-Ethernet0/0/0]done.
+[Huawei-Ethernet0/0/0]quit
+[Huawei]
+## 将ethernet0/0/1加入聚合
+[Huawei]interface Ethernet0/0/1	
+[Huawei-Ethernet0/0/1]eth-trunk 1
+[Huawei-Ethernet0/0/1]done.
+[Huawei-Ethernet0/0/1]quit
+```
 
 
 

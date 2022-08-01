@@ -44,3 +44,15 @@ git remote set-head origin -a
    即先`yy`指令复制`pick commit_ID`到指定位置，然后把`pick`换成`s`或`f`，实现合并
 
 3. 弹出commit信息页面，需要手动修改合并后的commit信息。
+
+### 修改未push commit message
+
+```bash
+--amend               amend previous commit
+$ git commit --amend
+[main b71d7f6] 2022-07-31: git config user and email
+ Date: Sun Jul 31 19:52:35 2022 +0800
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+```
+

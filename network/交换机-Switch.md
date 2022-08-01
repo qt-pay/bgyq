@@ -231,6 +231,8 @@ STP： Spanning Tree Protocol
 
  STP 技术在逻辑上将某些接口阻塞掉，防止形成环路。
 
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/stp-pro.jpg)
+
 端口角色描述--
 
 根端口RP	能够转发数据，接收BPDU（存储最优的BPDU），通常不发BPDU
