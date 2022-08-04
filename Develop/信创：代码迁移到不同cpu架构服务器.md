@@ -1,5 +1,11 @@
 ## 信创：代码迁移到不同cpu架构服务器
 
+### k8s pod
+
+k8s 通过 pause容器实现了同一个pod中共享存储和网络命名空间，而且还屏蔽了底层运行时容器共享方案的差异行。
+
+docker和Kata容器的共享肯定不一样。
+
 ### 问题
 
 同一份代码，运行在不通架构CPU服务器上需要编译适配么？
@@ -46,6 +52,31 @@ CPU指令集都变了，所以需要重新写。
 - 支持 8 个 DDR 通道，传统 CPU 仅 6 个，吞吐率提升 25%；
 - SOC 芯片，一颗芯片四合一，包含 CPU、南桥、网卡和 SAS 控制器，效能提升 30%；
 - 集成压缩、加密、重删等硬件加速引擎的处理器，大大提升应用的性能，释放更多 CPU 算力。
+
+#### demo
+
+如下，该python镜像进行某些骚操作，导致arm 64服务器上镜像无法运行。根本原因还是镜像制作时，是在x86或arm服务器上，镜像编译时没加参数，导致镜像无法跨cpu架构平台使用。
+
+Docker in fact detects the Apple M1 Pro platform as `linux/arm64/v8`
+
+```bash
+$ docker run --rm -it --entrypoint=python k8s_test:v1
+standard_init_linux.go:228: exec user process caused: exec format error
+$ docker run --rm -it --entrypoint=sh k8s_test:v1
+standard_init_linux.go:228: exec user process caused: exec format error
+
+## Docker in fact detects the Apple M1 Pro platform as linux/arm64/v8
+# Build for ARM64 (default)
+docker build -t <image-name>:<version>-arm64 .
+
+# Build for ARM64 
+docker build --platform=linux/arm64 -t <image-name>:<version>-arm64 .
+
+# Build for AMD64
+docker build --platform=linux/amd64 -t <image-name>:<version>-amd64 .
+```
+
+
 
 ### 建议
 

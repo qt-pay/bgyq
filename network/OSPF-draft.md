@@ -121,6 +121,27 @@ end
 
 OSPF 路由协议是链路状态型路由协议，这里的链路指的是设备上的接口。链路状态型路由协议基于连接源和目标设备的链路状态作出路由的决定。链路状态是接口及其邻接网络设备的关系的描述，接口的信息即链路的信息，也就是链路的状态（信息）。这些信息包括接口的 IPv6 前缀（ prefix ）、子网掩码、接口连接的网络（链路）类型、与该接口在同一网络（链路）上的路由器等信息。这些链路状态信息由不同类型的 LSA 携带，在网络上传播。
 
+### 组播地址
+
+根据不同的数据链路层协议网络，OSPF的组播地址也不同。
+
+**OSPF点到点网络**
+
+是连接单独的一对路由器的网络,点到点网络上的有效邻居总是可以形成邻接关系的,在这种网络上,OSPF包的目标地址使用的是**224.0.0.5**
+**OSPF广播型网络**
+
+比如以太网,令牌环网和FDDI,这样的网络上会选举一个DR和BDR,DR/BDR的发送的OSPF包的目标地址为**224.0.0.5**;而除了DR/BDR以外的OSPF包的目标地址为**224.0.0.6**
+
+在**广播型网络**中,**所有路由器**都以**224.0.0.5**的地址发送hello包,用来维持邻居关系,
+
+**非DR/BDR**路由都以**224.0.0.6**的地址发送lsa更新,而只有**DR/BDR**路由**监听**这个地址,
+
+反过来,**DR**路由使用**224.0.0.5**来发送更新**到非DR路由**
+
+**AllDRouters**(224.0.0.6)
+
+**AllSPFRouters** (224.0.0.5)
+
 ### 网络类型
 
 https://blog.csdn.net/qq_44667101/article/details/105733924?spm=1001.2101.3001.6650.1&utm_medium=distribute.pc_relevant.none-task-blog-2%7Edefault%7ECTRLIST%7ERate-1.pc_relevant_default&depth_1-utm_source=distribute.pc_relevant.none-task-blog-2%7Edefault%7ECTRLIST%7ERate-1.pc_relevant_default&utm_relevant_index=2
