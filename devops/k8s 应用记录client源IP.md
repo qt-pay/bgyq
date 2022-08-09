@@ -22,6 +22,36 @@ X-Forwarded-For: IP0, IP1, IP2
 
 Server端只要获取到`X-Forwarded-For`对应的IP list，然后读取第一个元素，就可以拿到客户端真实IP了。
 
+#### x-forward-for and x-real-ip
+
+> the `X-Forwarded-For` client request header field with the `$remote_addr` variable appended to it, separated by a comma. If the `X-Forwarded-For` field is not present in the client request header, the `$proxy_add_x_forwarded_for` variable is equal to the `$remote_addr` variable.
+
+If the incoming request already contains the `X-Forwarded-For` header, lets say
+
+```
+X-Forwarded-For: 203.0.113.195, 150.172.238.178
+```
+
+and your request is coming from the IP `198.51.100.17`, the new `X-Forwarded-For` header value (to be passed to the upstream) will be the
+
+```
+X-Forwarded-For: 203.0.113.195, 150.172.238.178, 198.51.100.17
+```
+
+If the incoming request won't contain the `X-Forwarded-For` header, this header will be passed to the upstream as
+
+```
+X-Forwarded-For: 198.51.100.17
+```
+
+On the other hand, the `X-Real-IP` header being set the way you show in your question will be always be equal to the `$remote_addr` nginx internal variable, in this case it will be
+
+```
+X-Real-IP: 198.51.100.17
+```
+
+
+
 ### NodePort
 
 You can set the `spec.externalTrafficPolicy` field to control how traffic from external sources is routed. Valid values are `Cluster` and `Local`. Set the field to `Cluster` to route external traffic to all ready endpoints and `Local` to only route to ready node-local endpoints. If the traffic policy is `Local` and there are no node-local endpoints, the kube-proxy does not forward any traffic for the relevant Service.
@@ -38,7 +68,13 @@ API Server 要求只有使用 `LoadBalancer` 或者 `NodePort` 类型的 Service
 
   anti-pod-node-IP --> pod-in-node-calico-gw-IP --> svc --> pod
 
-* 
+* externalTrafficPolicy为Cluster，通过pod所在node访问，Nginx记录client IP为`172.168.165.151`即节点IP
+
+  流量途径： node ip --> svc --> pod
+
+* externalTrafficPolicy为Local，通过非pod所在node访问，访问失败
+
+* externalTrafficPolicy为Local，通过pod所在node访问，访问成功，Nginx记录client IP为真实源IP
 
 ```bash
 $ tail nginx.log
@@ -89,43 +125,9 @@ nginx-ingress pod需要使用`externalTrafficPolicy: Local` 或者 直接使用h
 
 公网访问 --> 公网IP映射Nginx IP --> nginx pod --> app pod
 
-两个Nginx Ingress pod都是用hotsnetwork方式，在使用keepalive 搞个VIP，把这个VIP作为LoadBalancerIP手动加到nginx-ingress service中,再将一个公网映射到这个VIP上，实现公网可以直接访问Nginx Ingress代理的pod
+两个Nginx Ingress pod都是用hotsnetwork方式，使用keepalive 基于两个nginx pod搞个VIP，再将一个公网映射到这个VIP上，实现公网可以直接访问Nginx Ingress代理的pod
 
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  labels:
-    ...
-  managedFields:
-  name: ingress-nginx-controller
-  namespace: ingress-nginx
-spec:
-  clusterIP: 10.96.122.221
-  clusterIPs:
-  - 10.96.122.221
-  ipFamilies:
-  - IPv4
-  ipFamilyPolicy: SingleStack
-  loadBalancerIP: 10.0.1.190
-  ports:
-  - appProtocol: http
-    name: http
-    port: 8080
-    protocol: TCP
-    targetPort: http
-  - appProtocol: https
-    name: https
-    port: 8443
-    protocol: TCP
-    targetPort: https
-  selector:
-    app.kubernetes.io/component: controller
-    app.kubernetes.io/instance: ingress-nginx
-    app.kubernetes.io/name: ingress-nginx
-  sessionAffinity: None
-  type: ClusterIP
-```
+
 
 
 
@@ -144,13 +146,13 @@ data:
    查看**NGINX Ingress Controller的ConfigMaps配置文档**，可以找到以下配置项**use-forwarded-headers**如果为true，NGINX会将传入的 **X-Forwarded-\*** 头传递给**upstreams**。当NGINX位于另一个正在设置这些标头的 L7 proxy / load balancer 之后时，请使用此选项。
    如果为false，NGINX会忽略传入的 X-Forwarded-* 头，用它看到的请求信息填充它们。如果NGINX直接暴露在互联网上，或者它在基于 L3/packet-based load balancer 后面，并且不改变数据包中的源IP，请使用此选项。
 
-   ps： NGINX Ingress Controller直接暴露互联网也就是Edge模式不能开启为true，否则会有**伪造ip**的安全问题。也就是k8s有公网ip，直接让客户端访问，本配置不要设为true！
+   **ps：** NGINX Ingress Controller直接暴露互联网也就是Edge模式不能开启为true，否则会有**伪造ip**的安全问题。也就是k8s有公网ip，直接让客户端访问，本配置不要设为true！
 
 2. **forwarded-for-header**
 
    设置标头字段以标识客户端的原始IP地址。 默认: X-Forwarded-For
 
-   ps：如果 NGINX Ingress Controller 在CDN，WAF，LB等后面，设置从头的哪个字段获取IP，默认是X-Forwarded-For
+   **ps**：如果 NGINX Ingress Controller 在CDN，WAF，LB等后面，设置从头的哪个字段获取IP，默认是X-Forwarded-For
 
    这个配置应该和use-forwarded-headers配合使用
 
@@ -168,9 +170,19 @@ location /api/ {
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_pass http://IP:Port;
 }
+
+## log format
+log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+## log context
+## 10.255.123.0 是Nginx ingress pod（和业务pod不在一个节点）所在node的默认calico网关地址
+## 172.168.197.239 是 client sources IP
+10.255.123.0 - - [05/Aug/2022:15:04:03 +0800] "GET / HTTP/1.1" 304 0 "-" "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Safari/537.36" "172.168.197.239"
+
 ```
 
-x-real-ip获取到的是上一级代理的IP，而不是真正的客户端IP，需要proxy_add_x_forwarded_for进行合作判断。
+**x-real-ip获取到的是上一级代理的IP，而不是真正的客户端IP**，需要proxy_add_x_forwarded_for进行合作判断。
 x-forwarded-for 存储从客户端到各级代理再到服务端链路上经过的所有IP。
 
 proxy_add_x_forwarded_for 的意思是向x-forwared-for上添加一次记录。
@@ -191,6 +203,53 @@ proxy_set_header X-Forwarded-For $remote_addr;
 
 请求到达 Nginx 之前的所有代理信息都被抹掉，无法为真正使用代理的用户提供更好的服务。
 
+##### 覆盖remote_addr
+
+remote_addr记录默认是代理IP，比如流量是：client--> nginx_1 --> Nginx_2 --> pod 那么nginx_2记录的remote addr就是Nginx_1的IP
+
+在中间没有代理的时候，remote_addr 代表客户端的 IP，但是有代理的时候 remote_addr 存的是代理机器 IP。 而当使用代理时，x_forwarded_for 会把代理 IP 拼接在后面，第一个始终是客户端真实 IP。但是 x_forwarded_for 客户端可以伪造。
+
+To use *realip* change `$remote_addr` to client user’s real IP. need following config in nginx main config:
+
+当Nginx处在HAProxy或其他后面时，就会把remote_addr设为前面代理服务器的IP，这个值其实是毫无意义的，你可以通过nginx的realip模块，让它使用x_forwarded_for里的值。
+
+```nginx
+# 把X-Forwarded-For的值设置为real_ip_header，X-Forwarded-For是nginx X-Forwarded-For列表中记录的第一个IP地址。
+# 加到 http {} 就行
+real_ip_header X-Forwarded-For;
+real_ip_recursive on;
+# pod cidr
+set_real_ip_from 10.240.0.0/12;
+
+## 修改后nginx日志
+## log format
+log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+## log 
+172.168.197.239 - - [05/Aug/2022:18:04:03 +0800] "GET / HTTP/1.1" 304 0 "-" "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Safari/537.36" "172.168.197.239"
+```
+
+##### nginx-https+haproxy+nginx
+
+网站为了安全考虑通常会使用https连接来传输敏感信息，https使用了ssl加密，HAProxy没法直接解析，所以要在HAProxy前面先架台Nginx解密，再转发到HAProxy做[负载均衡](https://cloud.tencent.com/product/clb?from=10680)。这样在Web服务器前面就存在了两个代理，为了能让它获取到真实的客户端IP，需要做以下配置。
+
+首先要在Nginx的代理规则里设定
+
+```javascript
+proxy_set_header   X-Forwarded-For  $proxy_add_x_forwarded_for;
+```
+
+这样会让Nginx的https代理增加x_forwarded_for头信息，保存客户的真实IP。
+
+其次修改HAProxy的配置
+
+```javascript
+option     forwardfor except 10.1.10.0/24
+```
+
+这个配置和之前设定的差不多，只是多了个内网的IP段，表示如果HAProxy收到的请求是由内网传过来的话（https代理机器），就不会设定x_forwarded_for的值，保证后面的web服务器拿到的就是前面https代理传过来的。
+
 ### Gateway： Kong
 
 ### Aliyun SLB
@@ -202,3 +261,4 @@ proxy_set_header X-Forwarded-For $remote_addr;
 1. https://juejin.cn/post/6976058706756632606
 2. https://imququ.com/post/x-forwarded-for-header-in-http.html
 3. https://blog.fleeto.us/post/life-of-a-packet-in-k8s-3/
+4. https://cloud.tencent.com/developer/article/1158772

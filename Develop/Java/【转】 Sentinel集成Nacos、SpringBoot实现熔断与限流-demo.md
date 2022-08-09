@@ -158,6 +158,20 @@ sentinel的配置非常简洁，我们可以在簇点链路查看微服务注册
 
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/sentinel-熔断-2.png)
 
+### 调用失败排查思路
+
+1. 登陆Eureka界面，确定server provider是否注册成功
+
+   ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/eureka-provider-svc.png)
+
+2. 点击service信息，查看注册instance是否为ip格式。
+
+   如果provider使用hostname注册，会影响client解析
+
+   ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/eureka-provider-ip.png)
+
+3. 判断client是否配置错误，比如Feign client是否设置了`fetchRegistry=false`
+
 ### Spring Cloud微服务调用客户端
 
 在spring cloud 中有两种服务调用方式，一种是ribbon+restTemplate ，另一种是feign。相对来说，feign因为注解使用起来更简便。而restTemplate需要我们自定义一个RestTemplate，手动注入，并设置成LoadBalance。
@@ -257,6 +271,18 @@ public String getConsumerInfo(@PathVariable("id") String id){
 
 #### feign client
 
+https://www.cnblogs.com/ludangxin/p/16051873.html
+
+feign是声明式的web service客户端，它让微服务之间的调用变得更简单了，类似controller调用service。Spring Cloud集成了Ribbon和Eureka，可在使用Feign时提供负载均衡的http客户端。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/spring-cloud-feign.png)
+
+Feign中本身已经集成了Ribbon依赖和自动配置，因此我们不需要额外引入依赖，也不需要再注册 RestTemplate 对象。
+
+
+
+
+
 Feign是一种比较规范的微服务调用方式，这也是Spring Cloud Netflix项目提供的服务调用框架。使用Feign进行服务调用时需要额外引入其依赖信息：
 
 ```xml
@@ -295,6 +321,28 @@ public String getConsumerInfoByFeign(@PathVariable("id") String id){
 
 最后需要在消费者模块启动类上使用`@EnableFeignClients`注解来开启Feign功能。
 
+##### clientfetchRegistry：服务发现
+
+用Feign搭建服务消费者的时候，考虑消费者不需要再提供服务给其他服务，所以不需要注册到注册中心（eureka）中。结果把registerWithEureka和fetchRegistry都关掉了，服务调用时报错：com.netflix.client.ClientException: Load balancer does not have available server for client: XXXXXX。
+
+　　看报错信息，负载均衡器没有找到可用的服务，Feign默认使用ribbon做负载均衡。
+
+　　不想注册，将registerWithEureka关掉就行了。启动类有eureka注解的情况下（即是一个eureka客户端），fetchRegistry打开才能从eureka拉取服务列表，ribbon才能做负载均衡。
+
+```yaml
+eureka:
+  instance:
+    hostname: localhost
+  client:
+    # 服务注册：是否将自己注册到Eureka服务中，本身就是所有无需注册
+    registerWithEureka: false
+    # 服务发现：是否从Eureka中获取注册信息
+    fetchRegistry: false
+    # 客户端与Eureka服务端进行交互的地址
+    serviceUrl:
+      defaultZone: http://${eureka.instance.hostname}:${server.port}/eureka/
+```
+
 
 
 #### Httpclient
@@ -307,12 +355,15 @@ public String getConsumerInfoByFeign(@PathVariable("id") String id){
 
 ## 转载
 
+详细demo：https://www.cnblogs.com/ludangxin/p/16051873.html
+
 1. https://juejin.cn/post/7035991244312444965
 2. https://blog.liboliu.com/a/140
 3. https://blog.csdn.net/wangmx1993328/article/details/121189232
 4. https://zhuanlan.zhihu.com/p/115403195
 5. https://blog.csdn.net/FengGLA/article/details/54869858
 6. https://mfrank2016.github.io/breeze-blog/2020/05/04/java/basic/java-package/
+7. https://www.shuzhiduo.com/A/RnJWw84EJq/
 
 
 
