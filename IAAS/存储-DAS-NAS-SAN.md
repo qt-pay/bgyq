@@ -173,6 +173,51 @@ tmpfs                  1.5G     0  1.5G   0% /run/user/1002
 
 end
 
+#### 修复文件系统
+
+```bash
+-L           Force log zeroing. Do this as a last resort.
+$ xfs_repair -L /dev/klas/var
+```
+
+xfs_repair最重要的是指定要修复的设备
+
+如果是LVM管理分区的
+
+可以通过 ls -l /dev/mapper 来查看可用的设备。
+
+一般可以看到2到3个链接文件，centos-home -> ../dm-1, centos-root->../dm-0
+
+执行xfs_repair /dev/dm-0 正常情况下，这个分区就修复好了，再接着执行 xfs_repair /dev/dm-1，正常情况下，这个分区也会修复好。
+
+如果不是LVM分区管理的，可以 通过 ls /dev 查看，一般会有sda,sda1,sda2.
+
+可以执行 xfs_repair /dev/sda1 和 xfs_repair /dev/sda2 进行修复。
+
+如果修复失败，可以加上 -L 参数，这样可能会丢失部分数据。
+
+修复的过程中可能会出错，提示找不到superblock。
+
+##### sector
+
+文件储存在硬盘上，`硬盘的最小存储单位叫做"扇区"`（即：Sector）。每个扇区储存`512字节`（相当于0.5KB）。
+
+##### block
+
+操作系统读取硬盘的时候，不会一个个扇区地读取，这样效率太低，而是一次性连续读取多个扇区，即一次性读取一个"块"（block）。`这种由多个扇区组成的"块"，是文件存取的最小单位`。“块"的大小，最常见的是`4KB`，即连续`八个 sector`组成一个 block。
+
+block是文件存取的最小单位，文件数据都储存在"块"中。
+
+一个文件的文件名，存储在上级目录的block中！
+
+##### inode
+
+储存文件的元信息，比如文件的创建者、文件的创建日期、文件的大小等等。这种`储存文件元信息的区域就叫做inode`，中文译名为"索引节点”。
+
+##### superblock
+
+`记录此filesystem 的整体信息`，包括inode/block的总量、使用量、剩余量， 以及档案系统的格式与相关信息等；
+
 ### 开机自动挂载磁盘
 
 #### 获取磁盘uuid

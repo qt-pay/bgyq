@@ -1,5 +1,101 @@
 ## 网关限流和熔断：Kong and Spring Gateway
 
+### 微服务限流和熔断Demo:fire:
+
+熔断+限流，应该从两个层次考虑：总流量阈值 + 单个实例阈值
+
+每个应用实例本身配置Hystrix实现限流和熔断，甚至可以没有网关层面的整体流量熔断
+
+网关配置熔断限流规则是全局的，即基于全部实例健康的前提下，设置的流量最大保护阈值。但是服务实例本身也要配置自身的最大安全阈值，不然会造成服务雪崩。
+
+假设，业务A有N个实例，每个实例配置的最大容量阈值是200，这在网关层面可以给业务A的接口可以配置的最大流量阈值是N * 200。假如N个实例中有某个实例异常了，那么其余实例在满网关入口流量满负载的情况下，剩余的N-1个实例会收到大于200的流量请求，极端场景会导致整个服务雪崩。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/spring-cloud-hystrix.png)
+
+#### 应用 and 接口
+
+一个springboot应用可以有N个接口，限流是针对应用/服务的某个接口来设置的。
+
+如下，Hystrix hello world.
+
+实现原理讲起来很简单，其实就是不让客户端“裸调“服务器的rpc接口，而是在客户端包装一层。就在这个包装层里面，实现熔断逻辑。 
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/hystrix-流程.png)
+
+```java
+// HystrixConfig
+@Configuration
+public class HystrixConfig {
+
+    /**
+     * 声明一个HystrixCommandAspect代理类，现拦截HystrixCommand的功能
+     */
+    @Bean
+    public HystrixCommandAspect hystrixCommandAspect() {
+        return new HystrixCommandAspect();
+    }
+
+}
+// 定义service
+@Service
+public class HelloService {
+
+    @HystrixCommand(fallbackMethod = "helloError",
+            commandProperties = {
+                    @HystrixProperty(name = "execution.isolation.strategy", value = "THREAD"),
+                    @HystrixProperty(name = "execution.isolation.thread.timeoutInMilliseconds", value = "1000"),
+                    @HystrixProperty(name = "circuitBreaker.enabled", value = "true"),
+                    @HystrixProperty(name = "circuitBreaker.requestVolumeThreshold", value = "2")},
+            threadPoolProperties = {
+                    @HystrixProperty(name = "coreSize", value = "5"),
+                    @HystrixProperty(name = "maximumSize", value = "5"),
+                    @HystrixProperty(name = "maxQueueSize", value = "10")
+            })
+    public String sayHello(String name) {
+        try {
+            Thread.sleep( 15000 );
+            return "Hello " + name + " !";
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    public String helloError(String name) {
+        return "服务器繁忙，请稍后访问~";
+    }
+
+}
+
+// 启动类
+@SpringBootApplication
+@RestController
+public class HystrixSimpleApplication {
+
+    @Autowired
+    //关键点：把一个RPC调用，封装在一个HystrixCommand里面
+    private HelloService helloService;
+
+    public static void main(String[] args) {
+        SpringApplication.run( HystrixSimpleApplication.class, args );
+    }
+
+    @GetMapping("/hi")
+    public String hi(String name) {
+        return helloService.sayHello( name );
+    }
+
+
+}
+
+
+//客户端调用：以前是直接调用远端RPC接口，现在是把RPC接口封装到HystrixCommand里面，它内部完成熔断逻辑
+curl -X GET -d 'name=test' http://localhost:8080/hi
+
+```
+
+
+
 ### 单机限流和分布式限流
 
 由于请求倾斜的存在，分发到集群中每个节点上的流量不可能均匀，所以单机限流无法实现精确的限制整个集群的整体流量，导致总流量没有到达阈值的情况下一些机器就开始限流。例如服务 A 部署了 3 个节点，规则配置限流阈值为 200qps，理想情况下集群的限流阈值为 600qps，而实际情况可能某个节点先到达 200qps，开始限流，而其它节点还只有 100qps，此时集群的 QPS 为 400qps。
@@ -11,6 +107,8 @@
 分布式限流算法相较于单机的限流算法，最大的区别就是接口请求计数器需要中心化存储，比如我们开源限流项目 ratelimiter4j 就是基于 Redis 中心计数器来实现分布式限流算法。
 
 分布式限流算法的性能瓶颈主要在中心计数器 Redis，从我们开源的 ratelimiter4j 压测数据来看，在没有做 Redis sharding 的情况下，基于单实例 Redis 的分布式限流算法的性能要远远低于基于内存的单机限流算法，基于我们的压测环境，单机限流算法可以达到 200 万 TPS，而分布式限流算法只能做到 5 万 TPS。所以，在应用分布式限流算法时，一定要考量限流算法的性能是否满足应用场景，如果微服务接口的 TPS 已经超过了限流框架本身的 TPS，则限流功能会成为性能瓶颈影响接口本身的性能。
+
+
 
 ### 分布式限流实现方式
 
@@ -219,4 +317,5 @@ Rate Limiting 采用的限流算法是计数器的方式，所以无法提供类
 1. https://www.gotkx.com/?p=82
 1. https://learn.lianglianglee.com/%E4%B8%93%E6%A0%8F/%E6%B7%B1%E5%85%A5%E7%90%86%E8%A7%A3%20Sentinel%EF%BC%88%E5%AE%8C%EF%BC%89/18%20Sentinel%20%E9%9B%86%E7%BE%A4%E9%99%90%E6%B5%81%E7%9A%84%E5%AE%9E%E7%8E%B0%EF%BC%88%E4%B8%8A%EF%BC%89.md
 1. https://blog.csdn.net/en_joker/article/details/108644174
+1. https://blog.51cto.com/u_5650011/5393118
 

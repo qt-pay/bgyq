@@ -1,4 +1,4 @@
-## 【转】分布式限流算法
+## [LGTM]分布式限流算法
 
 ### (微)服务中的上下游
 在由微服务（或者只是过时的分布式服务）构成的系统中，同样有上下游服务的讨论。意料之中，依赖原则和价值原则都可以运用到这个场景。服务 B 是上游服务因为服务 A 依赖它。服务 A 是下游服务因为它在服务 B 的基础上增加了价值。
@@ -123,8 +123,6 @@ Token Bucket令牌桶算法是目前应用最为广泛的限流算法，顾名�
 
 即生成令牌的速率要低于下游服务的处理极限，避免打垮服务。
 
-
-
 #### 漏桶算法：处理上限固定
 
 Leaky Bucket，漏桶算法的前半段和令牌桶类似，但是操作的对象不同，令牌桶是将令牌放入桶里，而漏桶是将访问请求的数据包放到桶里。同样的是，如果桶满了，那么后面新来的数据包将被丢弃（这里是不是也可以自己修改算法，增加请求缓存队列？）。
@@ -168,8 +166,6 @@ Rolling Window
 
 #### 总结
 
-
-
 根据它们各自的特点不难看出来，这两种算法都有一个“恒定”的速率和“不定”的速率。令牌桶是以恒定速率创建令牌，但是访问请求获取令牌的速率“不定”，反正有多少令牌发多少，令牌没了就干等。而漏桶是以“恒定”的速率处理请求，但是这些请求流入桶的速率是“不定”的。
 
 从这两个特点来说，漏桶的天然特性决定了它不会发生突发流量，就算每秒1000个请求到来，那么它对后台服务输出的访问速率永远恒定。而令牌桶则不同，其特性可以“预存”一定量的令牌，因此在应对突发流量的时候可以在短时间消耗所有令牌，其突发流量处理效率会比漏桶高，但是导向后台系统的压力也会相应增多。
@@ -178,8 +174,312 @@ Rolling Window
 
 2）在“令牌桶算法”中，只要令牌桶中存在令牌，那么就允许突发地传输数据直到达到用户配置的门限，所以它适合于具有突发特性的流量。
 
+### code demo
+
+#### leaky bucket
+
+漏桶法的关键点在于漏桶始终按照固定的速率运行，关于漏桶的实现，uber团队有一个开源的[github.com/uber-go/ratelimit](https://github.com/uber-go/ratelimit)库。 这个库的使用方法比较简单。
+
+```go
+func main() {
+	// rl := ratelimit.New(100,ratelimit.Per(20 * time.Second)) // per second
+    rl := ratelimit.New(100)
+	prev := time.Now()
+	for i := 0; i < 10; i++ {
+		now := rl.Take()
+		fmt.Println(i, now.Sub(prev))
+		prev = now
+	}
+
+}
+// output
+0s
+1 10ms
+...
+99 10ms
+```
+
+
+
+#### token bucket
+
+令牌桶其实和漏桶的原理类似，令牌桶按固定的速率往桶里放入令牌，并且只要能从桶里取出令牌就能通过，令牌桶支持突发流量的快速处理。
+
+```go
+func main() {
+	//b := newBucket(1*time.Second, 100)
+	b := ratelimit.NewBucket(1*time.Second, 100)
+	blockNum := 0
+	acceptNUm := 0
+	for i := 0; i < 1000; i++ {
+		before := b.Available()
+		tokenGet := b.TakeAvailable(1)
+		fmt.Println("tokenGet num", tokenGet)
+		if tokenGet != 0 {
+			acceptNUm++
+			fmt.Println("获取到令牌 index=", i+1, "前后数量-> 前：", before, ", 后: ", b.Available(), ", tokenGet=", tokenGet, acceptNUm)
+		} else {
+			blockNum++
+			fmt.Println("未获取到令牌，拒绝", i+1, blockNum)
+		}
+		// 1 Second = 1000 * Millisecond
+		time.Sleep(1*time.Millisecond)
+	}
+
+}
+// output
+tokenGet num 1
+获取到令牌 index= 90 前后数量-> 前： 11 , 后:  10 , tokenGet= 1 90
+...
+tokenGet num 1
+获取到令牌 index= 100 前后数量-> 前： 1 , 后:  0 , tokenGet= 1 100
+tokenGet num 0
+未获取到令牌，拒绝 101 1
+tokenGet num 0
+未获取到令牌，拒绝 102 2
+...
+```
+
+对于令牌桶的Go语言实现，大家可以参照[github.com/juju/ratelimit](https://github.com/juju/ratelimit)库。这个库支持多种令牌桶模式，并且使用起来也比较简单。
+
+创建令牌桶的方法：
+
+```go
+// 创建指定填充速率和容量大小的令牌桶
+func NewBucket(fillInterval time.Duration, capacity int64) *Bucket
+// 创建指定填充速率、容量大小和每次填充的令牌数的令牌桶
+func NewBucketWithQuantum(fillInterval time.Duration, capacity, quantum int64) *Bucket
+// 创建填充速度为指定速率和容量大小的令牌桶
+// NewBucketWithRate(0.1, 200) 表示每秒填充20个令牌
+func NewBucketWithRate(rate float64, capacity int64) *Bucket
+```
+
+取出令牌的方法如下：
+
+```go
+// 取token（非阻塞）
+func (tb *Bucket) Take(count int64) time.Duration
+// TakeAvailable takes up to count immediately available tokens from the
+// bucket. It returns the number of tokens removed, or zero if there are
+// no available tokens. It does not block.
+// 返回0就是没可用token了
+func (tb *Bucket) TakeAvailable(count int64) int64
+
+// 最多等maxWait时间取token
+func (tb *Bucket) TakeMaxDuration(count int64, maxWait time.Duration) (time.Duration, bool)
+
+// 取token（阻塞）
+func (tb *Bucket) Wait(count int64)
+func (tb *Bucket) WaitMaxDuration(count int64, maxWait time.Duration) bool
+```
+
+虽说是令牌桶，但是我们没有必要真的去生成令牌放到桶里，我们只需要每次来取令牌的时候计算一下，当前是否有足够的令牌就可以了，具体的计算方式可以总结为下面的公式：
+
+```go
+当前令牌数 = 上一次剩余的令牌数 + (本次取令牌的时刻-上一次取令牌的时刻)/放置令牌的时间间隔 * 每次放置的令牌数
+```
+
+#### 计数器
+
+计数器是一种最简单限流算法，其原理就是：在一段时间间隔内，对请求进行计数，与阀值进行比较判断是否需要限流，一旦到了时间临界点，将计数器清零。
+
+```go
+
+import (
+	"fmt"
+	log "github.com/sirupsen/logrus"
+	"sync"
+	"time"
+)
+
+type Counter struct {
+	rate  int           //计数周期内最多允许的请求数
+	begin time.Time     //计数开始时间
+	cycle time.Duration //计数周期
+	count int           //计数周期内累计收到的请求数
+	lock  sync.Mutex
+}
+
+func (l *Counter) Allow() bool {
+	l.lock.Lock()
+	defer l.lock.Unlock()
+
+	if l.count == l.rate-1 {
+		now := time.Now()
+		if now.Sub(l.begin) >= l.cycle {
+			//速度允许范围内， 重置计数器
+			l.Reset(now)
+			return true
+		} else {
+			return false
+		}
+	} else {
+		//没有达到速率限制，计数加1
+		l.count++
+		return true
+	}
+}
+
+func (l *Counter) Set(r int, cycle time.Duration) {
+	l.rate = r
+	l.begin = time.Now()
+	l.cycle = cycle
+	l.count = 0
+}
+
+func (l *Counter) Reset(t time.Time) {
+	l.begin = t
+	l.count = 0
+}
+
+func main() {
+	var wg sync.WaitGroup
+	var lr Counter
+	lr.Set(3, time.Second) // 1s内最多请求3次
+	resultReq := make([]bool, 10, 10)
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		log.Debug("创建请求:", i)
+		go func(i int) {
+			if lr.Allow() {
+				resultReq[i]=true
+				log.Debug("响应请求:", i)
+			}
+			wg.Done()
+		}(i)
+		// 1s = 1000 Millisecond
+		time.Sleep(200 * time.Millisecond)
+	}
+	wg.Wait()
+	for num, res := range resultReq{
+		if res{
+			fmt.Println("请求-", num, ":", " 响应")
+		} else {
+			fmt.Println("请求-", num, ":", " 拒绝")
+		}
+	}
+}
+
+// output
+请求- 0 :  响应
+请求- 1 :  响应
+请求- 2 :  拒绝
+请求- 3 :  拒绝
+请求- 4 :  拒绝
+// 新的一秒开始了-
+请求- 5 :  响应
+请求- 6 :  响应
+请求- 7 :  响应
+请求- 8 :  拒绝
+请求- 9 :  拒绝
+```
+
+
+
+##### 流量突刺:时间边界
+
+如果有个需求对于某个接口 `/query` 每分钟最多允许访问 200 次，假设有个用户在第 59 秒的最后几毫秒瞬间发送 200 个请求，当 59 秒结束后 `Counter` 清零了，他在下一秒的时候又发送 200 个请求。那么在 1 秒钟内这个用户发送了 2 倍的请求，这个是符合我们的设计逻辑的，这也是计数器方法的设计缺陷，系统可能会承受恶意用户的大量请求，甚至击穿系统。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/计数器-时间边界.webp)
+
+这种方法虽然简单，但也有个大问题就是没有很好的处理单位时间的边界。
+
+其实计数器也是滑动窗口啊，只不过只有一个格子而已，
+
+#### rolling windows
+
+滑动窗口算法将一个大的时间窗口分成多个小窗口，每次大窗口向后滑动一个小窗口，并保证大的窗口内流量不会超出最大值，这种实现比固定窗口的流量曲线更加平滑。
+
+○ 问题：没有根本解决固定窗口算法的临界突发流量问题
+
+所谓 `滑动窗口（Sliding window）` 是一种流量控制技术，这个词出现在 `TCP` 协议中。`滑动窗口`把固定时间片进行划分，并且随着时间的流逝，进行移动，固定数量的可以移动的格子，进行计数并判断阀值。
+
+红色的虚线代表一个时间窗口（`一分钟`），每个时间窗口有 `6` 个格子，每个格子是 `10` 秒钟。每过 `10` 秒钟时间窗口向右移动一格，可以看红色箭头的方向。我们为每个格子都设置一个独立的计数器 `Counter`，假如一个请求在 `0:45` 访问了那么我们将第五个格子的计数器 `+1`（也是就是 `0:40~0:50`），在判断限流的时候需要把所有格子的计数加起来和设定的频次进行比较即可。
+
+**确实，计数器是只有一个格子的滑动窗口。**
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/slidingwindows实现.webp)
+
+**本质思想**是转换概念，将原本问题的确定时间大小，进行次数限制。转换成确定次数大小，进行时间限制。
+
+```go
+package main
+
+import (
+	"log"
+	"net/http"
+	"time"
+)
+
+var LimitQueue map[string][]int64
+var ok bool
+
+//单机时间滑动窗口限流法
+func LimitFreqSingle(queueName string, count uint, timeWindow int64) bool {
+	currTime := time.Now().Unix()
+	if LimitQueue == nil {
+		LimitQueue = make(map[string][]int64)
+	}
+	if _, ok = LimitQueue[queueName]; !ok {
+		LimitQueue[queueName] = make([]int64, 0)
+	}
+	//队列未满
+	if uint(len(LimitQueue[queueName])) < count {
+		LimitQueue[queueName] = append(LimitQueue[queueName], currTime)
+		return true
+	}
+	//队列满了,取出最早访问的时间
+	earlyTime := LimitQueue[queueName][0]
+	//说明最早期的时间还在时间窗口内,还没过期,所以不允许通过
+	if currTime-earlyTime <= timeWindow {
+		return false
+	} else {
+		//说明最早期的访问应该过期了,去掉最早期的
+		LimitQueue[queueName] = LimitQueue[queueName][1:]
+		LimitQueue[queueName] = append(LimitQueue[queueName], currTime)
+	}
+	return true
+}
+func main()  {
+	http.HandleFunc(
+		"/",
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte("httpserver v1"))
+		},
+	)
+	http.HandleFunc("/bye", sayBye)
+	log.Println("Starting v1 server ...")
+	log.Fatal(http.ListenAndServe(":1210", nil))
+}
+
+func sayBye(w http.ResponseWriter, r *http.Request) {
+	if !LimitFreqSingle(string(r.Host), 2, 10){
+		log.Println("limit")
+	}else {
+		log.Println("Allow")
+	}
+	w.Write([]byte("bye bye ,this is v1 httpServer"))
+}
+
+// output
+// client curl http://127.0.0.1:1210/bye
+2022/08/10 23:29:35 Starting v1 server ...
+2022/08/10 23:30:02 Allow
+2022/08/10 23:30:03 Allow
+2022/08/10 23:30:04 limit
+2022/08/10 23:30:04 limit
+2022/08/10 23:30:06 limit
+```
+
+
+
 ### 引用
 
 1. https://segmentfault.com/a/1190000023126434
 2. https://xie.infoq.cn/article/4a0acdd12a0f6dd4a53e0472c
 3. https://blog.csdn.net/ternence_hsu/article/details/109844697
+4. https://www.codeleading.com/article/90595528948/
+5. https://www.cnblogs.com/liwenzhou/p/13670165.html#autoid-0-2-1
+6. https://segmentfault.com/a/1190000039958561
+7. https://cloud.tencent.com/developer/article/1761700

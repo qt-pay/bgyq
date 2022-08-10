@@ -28,7 +28,7 @@ rbd 和cephFS
 
 ### 软件网络
 
-#### keepalived
+#### keepalived/vrrp
 
 vip 高可用
 
