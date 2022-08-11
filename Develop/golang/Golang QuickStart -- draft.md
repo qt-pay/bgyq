@@ -42,11 +42,7 @@ thanks-for-reading-!
 
 Cheers!
 
-### golang image
 
-基础镜像使用的是Debian 10 Buster，可以使用这个配置apt list.
-
-https://cloud.tencent.com/developer/article/1590080
 
 ### project-layout
 
@@ -54,9 +50,11 @@ https://cloud.tencent.com/developer/article/1590080
 
 https://makeoptim.com/golang/standards/project-layout
 
-### goproxy
+Go code must be kept inside a workspace. A workspace is a directory hierarchy with three directories at its root:
 
-https://github.com/goproxy/goproxy.cn/blob/master/README.zh-CN.md
+* src contains Go source files organized into packages (one package per directory)
+* pkg contains package objects
+* bin contains executable commands
 
 ### package names：package unit
 
@@ -67,6 +65,10 @@ package name
 ```
 
 where `name` is the package's default name for imports. (All files in a package must use the same `name`.)
+
+同一个目录下，默认就是同一个package。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/golang-package-dir.jpg)
 
 注意，注意，注意：同一个package(dir)下不同文件中的function，可以直接相互引用.
 
@@ -94,7 +96,7 @@ func startServer() {
 >
 > 模块(module)其实就是py文件
 
-太神奇了，Golang一个package下面的不同文件的全局变量都可以直接引用.
+Golang一个package下面的不同文件的全局变量都可以直接引用.
 
 ```go
 // http_run.go
@@ -111,9 +113,13 @@ func redirect(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-end
+#### Error：one directory, multi package ？
 
+You cannot have two packages per directory.
 
+A set of files sharing the same PackageName form the implementation of a package. An implementation may require that all source files for a package inhabit the same directory.
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/golang-package-dir-and-packagename.jpg)
 
 一个dir(package)下面如果有多个go files of different package就会报错--
 
@@ -134,7 +140,7 @@ $ echo $?
 
 ```
 
-这句话有问题吧
+但是看etcd的源代码目录，如下一个mod目录下两个go file就是不同的package name
 
 ```bash
 $ tree /go/src/etcd/tools/mod/
@@ -149,28 +155,18 @@ $ tree /go/src/etcd/tools/mod/
 
 ## 同一个package下面，两个go files的 package name is different.
 $ cat /go/src/etcd/tools/mod/tools.go |grep -v "//"|head -n5
-
-
-
 package tools
-
 $ cat /go/src/etcd/tools/mod/libs.go |grep -v "//"|head -n5
-
-
-
 package libs
-
 root@974cf1a8c342:/go/src/pakagedemo/cmd#
 
 ```
 
-end
+### package main: executable
 
 Executable commands must always use `package main`.
 
 There is no requirement that package names be unique across all packages linked into a single binary, only that the import paths (their full file names) be unique.
-
-### package main: ELF
 
 `package main`只是一个标识，当运行`go install`时，该package下的文件生成一个executable file而不是一个以`.a`结尾的staic mode。
 
@@ -179,7 +175,7 @@ There is no requirement that package names be unique across all packages linked 
 * go build : 当前目录上生成 executale program
 * go install：在`GOPATH/bin`生成 executable program， 而不是生成`.a` file.
 
-PS:  executable file name is project name.
+PS:  **executable file name is project name.**
 
 When you build reusable pieces of code, you will develop a package as a shared library. But when you develop executable programs, you will use the package “main” for making the package as an executable program. The package “main” tells the Go compiler that the package should compile as an executable program instead of a shared library. The main function in the package “main” will be the entry point of our executable program. When you build shared libraries, you will not have any main package and main function in the package.
 
@@ -547,6 +543,67 @@ import (
 
 初看时，很迷，但是静下来，发现它真不错--
 
+### 值拷贝
+
+In a function call, the function value and arguments are evaluated in the usual order. After they are evaluated, the parameters of the call are passed by value to the function and the called function begins execution.
+
+官方文档已经明确说明：Go里边函数传参只有值传递一种方式: 值传递。
+
+值拷贝的语义：无论参数做什么修改，都不能作用到源变量身上，保证源变量参数不能被修改。
+
+如下demo：
+
+* slice a变量执行的底层数字arr
+* slice a作为argument，传入changSlice funct
+* 发送值拷贝形参arrArg被赋值，slice a 和 arrArg是两个不同的内存地址，但是它们的value相同，值复制
+* arrArg也指向底层数字arr，所以修改arrArg时slice a也被修改
+
+```go
+func main() {
+	arr := [5]int{0, 1, 2, 3, 4}
+	s := arr[1:]
+	changeSlice(s)
+	fmt.Println(s)
+	fmt.Println(arr)
+}
+
+func changeSlice(arrArg []int) {
+	for i := range arrArg {
+		arrArg[i] = 10
+	}
+}
+```
+
+#### 编译器优化值拷贝
+
+在reflect包中，会涉及到编译器优化值拷贝的工作。
+
+* reflect.TypeOf()语义是func TypeOf(i interface{}) Type {}，参数是个空接口类型，它需要接收一个地址。
+
+  因为iface结构体就两个指针成员变量
+
+* 也不能直接使用&a作为参数，因为这样违背了值传递的语义（不能直接修改原变量）
+
+* 编译器就会创建临时变量copy_of_a，然后在&copy_of_a
+
+* 这样既满足了传参值拷贝的语义，又满足了空接口参数对值的要求
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/golang-value-copy.jpg)
+
+#### 反射修改变量值
+
+使用场景：做orm和一些将json自动解析为结构体的操作。
+
+
+
+### 类型元数据
+
+无论内置类型还行自定义类型，都有全局唯一的元数据信息
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/golang-type-metadata.jpg)
+
+
+
 ### 内置数据类型
 
 golang 所有的类型数据都有一个pair(type, value) ，这就是反射的实现。
@@ -851,29 +908,6 @@ type byte = uint8
 ```
 
 end
-
-#### type: 自定义类型
-
-通过Type 关键字在原有类型基础上构造出一个新类型。但是**新类型不会拥有原基础类型所附带的方法**。
-
-函数也是一个确定的类型，就是以函数签名作为类型。这种类型的定义例如
-
-```go
-type Option func(person * Person)
-```
-
-根据函数签名声明一个新的类型，就可以使用这个新类型创建function slice了
-
-```go
-// sliceTest := make([]Option, 2, 3)
-func newPerson(options ...Option) Person{}
-...
-sliceTest := make([]Option, 2, 2)
-personTest := newPerson(sliceTest...)
-fmt.Println("personTest:", personTest)
-```
-
-
 
 #### map： 必用make()???
 
@@ -2132,7 +2166,126 @@ func main() {
 
 https://github.com/sinomoe/sino.moe/issues/11
 
+### 自定义类型
 
+#### type
+
+通过Type 关键字在原有类型基础上构造出一个新类型。但是**新类型不会拥有原基础类型所附带的方法**。
+
+函数也是一个确定的类型，就是以函数签名作为类型。这种类型的定义例如
+
+```go
+type Option func(person * Person)
+```
+
+根据函数签名声明一个新的类型，就可以使用这个新类型创建function slice了
+
+```go
+// sliceTest := make([]Option, 2, 3)
+func newPerson(options ...Option) Person{}
+...
+sliceTest := make([]Option, 2, 2)
+personTest := newPerson(sliceTest...)
+fmt.Println("personTest:", personTest)
+```
+
+如果不使用type重新定义变量...也可以就是不太好看--
+
+```go
+func main()  {
+	s := make([]func(name string), 2, 3)
+	s[0] = func(n string) {
+		fmt.Println(n)
+	}
+	test(s[0])
+}
+
+func test(fs ...func(name string))  {
+	for _, f := range fs {
+		f("aa")
+	
+
+```
+
+end
+
+##### 别名and新类型
+
+type myType = int32 相当于别名，没有新的type metadata产生
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/golang-type-alias-and-newtype.jpg)
+
+
+
+#### struct
+
+声明定义结构体，要注意：
+
+* 首字母大写是公有的，首字母小写是私有的
+* end
+
+```go
+package utils
+
+import "fmt"
+
+type Eggo struct {
+    // name string 则不能被其他文件引用
+	Name string
+	Age int
+}
+
+func (receiver Eggo) A()  {
+	fmt.Println("a")
+}
+
+func (receiver Eggo) B()  {
+	fmt.Println("b")
+}
+
+// 引用结构体
+package main
+
+import (
+	"fmt"
+	"test/utils"
+)
+
+func main()  {
+	a := utils.Eggo{
+		Name: "aa",
+		Age: 17,
+	}
+	fmt.Println(a.Name)
+	a.A()
+
+}
+
+```
+
+end
+
+#### interface
+
+
+
+### T and *T
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/golang-method.jpg)
+
+指针类似数据在编译阶段根据操作系统和cpu类型是可以确定的，所以为了支持接口:
+
+声明`func(t T)A(){}`时，会自动生成`func(pt *T)A(){}`。
+
+因此，Golang不允许为`T`和`*T`定义同名method。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/golang-interface-and-method.jpg)
+
+分析可以执行文件可以看到`*T`method会包含`T`同名method。
+
+但是链接器会去掉最终没有引用的method，so有些看不到
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/golang-method-t-and-pt.jpg)
 
 ### nil and zero-value
 
@@ -2415,5 +2568,8 @@ i := &v
 
 end
 
+## 引用
 
-
+1. https://segmentfault.com/a/1190000020086645
+2. https://space.bilibili.com/567195437/video
+3. https://www.zhihu.com/question/60426831/answer/176204563

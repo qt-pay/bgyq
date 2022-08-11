@@ -547,6 +547,12 @@ type eface struct {
 
 从这个数据结构可以看出，只有当 2 个字段都为 nil，空接口才为 nil。空接口的主要目的有 2 个，一是实现“泛型”，二是使用反射。
 
+```go
+func TypeOf(i interface{}) Type {}
+```
+
+
+
 #### interface类型转换，汇编:articulated_lorry:
 
 ##### 指针类型转换成interface
