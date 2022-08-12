@@ -121,6 +121,19 @@ A set of files sharing the same PackageName form the implementation of a package
 
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/golang-package-dir-and-packagename.jpg)
 
+一个文件夹下只能有一个package原则：
+
+- import后面的其实是GOPATH开始的相对目录路径，包括最后一段。但由于一个目录下只能有一个package，所以import一个路径就等于是import了这个路径下的包。
+
+- 注意，这里指的是“直接包含”的go文件。如果有子目录，那么子目录的父目录是完全两个包。
+
+- - 比如你实现了一个计算器package，名叫calc，位于calc目录下；但又想给别人一个使用范例，于是在calc下可以建个example子目录（calc/example/），这个子目录里有个example.go（calc/example/example.go）。此时，example.go可以是main包，里面还可以有个main函数。
+
+一个package的文件不能在多个文件夹下。
+
+- 如果多个文件夹下有重名的package，它们其实是彼此无关的package。
+- 如果一个go文件需要同时使用不同目录下的同名package，需要在import这些目录时为每个目录指定一个package的别名。
+
 一个dir(package)下面如果有多个go files of different package就会报错--
 
 ```bash
@@ -348,62 +361,11 @@ JavaScript
 
 In the above program, we import the lib package and call the exported methods provided by the lib package.
 
-
-
-### `()` 优先级
-
-由于`()` 改变了优先级，所以下面的报错类型是不一样的。即原来是`float32 > * `，现在`(*float)`绑在一块了。
-
-```go
-// i type is *int
-num := 5
-i = &num
-
-// Cannot convert expression of type '*int' to type '*float32'
-f = (*float32)(i)
-
-// Cannot convert expression of type '*int' to type 'float32'
-f = *floate32(i)
-```
-
-end
-
-
-
-
-
-### go tool
-
-#### 使用库文件编译
-
-golang 编译时，使用静态库文件：
-
-https://www.huaweicloud.com/articles/f655f9dcf7a9cb64858704894b95cf4b.html
-
-使用动态库文件：
-
-https://chai2010.cn/advanced-go-programming-book/ch2-cgo/ch2-09-static-shared-lib.html
-
-### package
-
-**一个文件夹下只能有一个package。**
-
-- import后面的其实是GOPATH开始的相对目录路径，包括最后一段。但由于一个目录下只能有一个package，所以import一个路径就等于是import了这个路径下的包。
-
-- 注意，这里指的是“直接包含”的go文件。如果有子目录，那么子目录的父目录是完全两个包。
-
-- - 比如你实现了一个计算器package，名叫calc，位于calc目录下；但又想给别人一个使用范例，于是在calc下可以建个example子目录（calc/example/），这个子目录里有个example.go（calc/example/example.go）。此时，example.go可以是main包，里面还可以有个main函数。
-
-一个package的文件不能在多个文件夹下。
-
-- 如果多个文件夹下有重名的package，它们其实是彼此无关的package。
-- 如果一个go文件需要同时使用不同目录下的同名package，需要在import这些目录时为每个目录指定一个package的别名。
-
-#### non-main package：找到答案了
+#### non-main package
 
 The `package main` tells the Go compiler that the package should compile as an executable program instead of a shared library. 
 
-哈哈哈，non-main package 它是一个 shared library，当然不能被执行了啊--
+non-main package 它是一个 shared library，当然不能被执行了啊--
 
 **go run: cannot run non-main package**
 
@@ -428,7 +390,260 @@ $ go run worker.go
 
 end
 
-#### init()
+### `()` 优先级
+
+由于`()` 改变了优先级，所以下面的报错类型是不一样的。即原来是`float32 > * `，现在`(*float)`绑在一块了。
+
+```go
+// i type is *int
+num := 5
+i = &num
+
+// Cannot convert expression of type '*int' to type '*float32'
+f = (*float32)(i)
+
+// Cannot convert expression of type '*int' to type 'float32'
+f = *floate32(i)
+```
+
+end
+
+### Golang源码编译
+
+#### 静态编译
+
+静态编译就是编译器在编译可执行文件的时候，将可执行文件需要调用的对应动态链接库(.so)中的部分提取出来，链接到可执行文件中去，使可执行文件在运行的时候不依赖于动态链接库。所以其优缺点与动态编译的可执行文件正好互补。
+
+#### 动态编译
+
+动态编译的可执行文件需要附带一个的动态链接库，在执行时，需要调用其对应动态链接库中的命令。所以其优点一方面是缩小了执行文件本身的体积，另一方面是加快了编译速度，节省了系统资源。缺点一是哪怕是很简单的程序，只用到了链接库中的一两条命令，也需要附带一个相对庞大的链接库；二是如果其他计算机上没有安装对应的运行库，则用动态编译的可执行文件就不能运行。
+
+#### ldd and go build
+
+如下这个 C程序编译出来后的二进制文件会需要这三个库文件，因此如果我们将它做移植时会因为缺失动态库文件而造成无法运行。
+
+```bash
+# ldd - print shared object dependencies
+$ gcc -o hc hello.c
+$ ldd ./hc
+linux-vdso.so.1 (0x00007ffe49571000)
+libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007f805817f000)
+/lib64/ld-linux-x86-64.so.2 (0x00007f8058772000)
+$  du -sh hc
+12K     hc
+
+```
+
+Go 编译出来的二进制文件是没有需要依赖的共享库的。
+
+```bash
+$ go build  -o hello hello.go
+$ ldd hello
+not a dynamic executable
+$ du -sh hello
+1.7M    hello
+
+```
+
+Go 编译出来的二进制文件比 C 语言编译出来的文件会大的多，这其实就是因为 Go 在编译时会将依赖库一起编译进二进制文件的缘故。
+
+Go默认情况下是采取的静态编译。但是，**不是所有情况下，Go都不会依赖外部动态共享库**！
+
+#### cgo
+
+如下，使用golang的net库，会有外部依赖
+
+```go
+package main
+import (
+    "fmt"
+    "net/http"
+)
+func main() {
+    http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+        fmt.Fprintf(w, "Hello, you've requested: %s\n", r.URL.Path)
+    })
+    http.ListenAndServe(":80", nil)
+}
+
+
+```
+
+验证编译结果
+
+```bash
+$ go build  -o server server.go
+$ ldd server
+linux-vdso.so.1 (0x00007fff8e9ae000)
+libpthread.so.0 => /lib/x86_64-linux-gnu/libpthread.so.0 (0x00007fcf6189e000)
+libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007fcf616d9000)
+/lib64/ld-linux-x86-64.so.2 (0x00007fcf618c6000)
+$ du -sh server
+5.9M    server
+
+```
+
+默认情况下 Go 语言是使用 Cgo 对 Go 程序进行构建的。当使用 Cgo 进行构建时，如果我们使用的包里用着使用 C 语言支持的代码，那么最终编译的可执行文件都是要有外部依赖的。
+
+自C语言出现，已经累积了无数功能强大、性能卓越的C语言代码库，可以说难以替代；为了方便快捷的使用这些C语言库，Go语言提供 Cgo，可以用以在 Go 语言中调用 C语言库。
+
+#### golang纯静态编译
+
+默认情况下，`CGO_ENABLED=1`，代表着启用 Cgo 进行编译。即默认开始cgo，允许你在Go代码中调用C代码，Go的pre-compiled标准库的.a文件也是在这种情况下编译出来的。我们如果将 `CGO_ENABLED` 置为 0，那么就可以关闭 Cgo：
+
+```bash
+$ du -sh server
+5.9M    server
+$ CGO_ENABLED=0 go build -o server server.go
+$ ldd server
+not a dynamic executable
+$ du -sh server
+5.8M    server
+
+```
+
+#### externel linker
+
+在CGO_ENABLED=1这个默认值的情况下，是否可以实现纯静态连接呢？答案是可以。即通过如下：
+
+cmd/link 有两种工作模式：`internal linking`和`external linking`。
+
+- `internal linking`：若用户代码中仅仅使用了 net、os/user 等几个标准库中的依赖 cgo 的包时，cmd/link 默认使用 `internal linking`，而无需启动外部external linker(如:gcc、clang等)，不过由于cmd/link功能有限，仅仅是将.o和pre-compiled的标准库的.a写到最终二进制文件中。
+- `external linking`：将所有生成的.o都打到一个`.o`文件中，再将其交给外部的链接器，比如 gcc 或 clang 去做最终链接处理。
+
+如果我们在写入参数 `-ldflags '-linkmode "external" -extldflags "-static"'`，那么 gcc/clang 将会去做静态链接，将`.o`中`undefined`的符号都替换为真正的代码，从而达到纯静态编译的目的：
+
+```bash
+$  go build -o server -ldflags '-linkmode "external" -extldflags "-static"' server.go
+# command-line-arguments
+/usr/bin/ld: /tmp/go-link-3984843045/000004.o: in function `_cgo_3c1cec0c9a4e_C2func_getaddrinfo':
+/tmp/go-build/cgo-gcc-prolog:58: warning: Using 'getaddrinfo' in statically linked applications requires at runtime the shared libraries from the glibc version used for linking
+$ ls server
+server
+$ du -sh server
+6.9M    server
+
+```
+
+
+
+### go tool: 使用库文件编译
+
+go build 和 go install 都需要使用源码来进行编译。但是有时候我们只有.a或者.so文件。并不能获取到第三方库的源码，这时就需要静态链接库编译的技巧
+
+ 一个现代编译器的主要工作流程如下： 源代码(source code) → 预处理器(preprocessor) → 编译器 (compiler) → 汇编程序(assembler) → 目标代码 (object code) → 链接器 (Linker) → 可执行文件 (executables)
+
+代码编译过程：
+
+首先要把源文件编译成中间代码文件，在Windows下也就是 .obj 文件，UNIX下是 .o 文件，即 Object File，这个动作叫做编译（compile）。然后再把大量的Object File合成执行文件，这个动作叫作链接（link）。
+
+a阿里ilogtail，使用so编译
+
+#### 静态函数库:`.a`
+
+`.a` 是好多个.o合在一起,用于静态连接 ，即static  mode，多个.a可以链接生成可执行文件。
+
+- 特点：实际上是简单的普通目标文件的集合，在程序执行前就加入到目标程序中。
+- 优点：可以用以前某些程序兼容；描述简单；允许程序员把程序link起来而不用重新编译代码，也就数不需要外部函数的支持，节省了重新编译代码的时间（该优势目前已不明显）；开发者还可以对源代码保密。
+- 这类库的名字一般是libxxx.a.利用静态函数库编译成的文件比较大,因为整个函数库的所有数据都会被整合进目标代码中。
+- 缺点：如果静态函数库改变了,那么你的程序必须重新编译。
+
+go install生成静态库时，只能以package为单位。
+
+Arguments must be package paths or package patterns (with "..." wildcards). They must not be standard packages (like fmt), meta-patterns (std, cmd,all), or relative or absolute file paths.
+
+```bash
+$ pwd
+/D/data_files/go_code/awesomeProject
+$ head -n 2 go.mod
+module test
+
+## 必须将package directory移动到GOPATH/src
+$ mv utils/ $GOPATH/src
+$ cd $GOPATH/src/utils/
+## 编译test.go生成静态库文件
+## 执行go install test.go不会生成utils.a
+$ go install
+```
+
+生成静态库文件的路径`${GOPATH}/pkg/${OS_CPU/package.a}`
+
+```bash
+$ ls /D/Program\ Files/Go/pkg/windows_amd64/utils.a
+'/D/Program Files/Go/pkg/windows_amd64/utils.a'
+```
+
+将`$GOPATH/src/utils/`目录删除，并将`import "test/utils"`改为`import "utils"`，即模拟用户没有源码，只有静态库的情况。如下，使用静态库，代码成功执行。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/golang-tool-compile-link.jpg)
+
+#### 共享态函数库:`.so`
+
+`.o`编译的目标文件
+
+`.so` 是shared object,用于动态连接的,使用时才载入。用于动态连接的,相当于windows下的dll，是Linux中的可执行文件。
+
+- 共享函数库在可执行程序启动的时候加载，所有程序重新运行时都可自动加载共享函数库中的函数。相对于静态函数库,共享函数库在编译的时候 并没有被编译进目标代码中。
+- 当程序执行到相关函数时才调用共享函数库里相应的函数,因此共享函数库所产生的可执行文件比较小.**由于共享函数库没有被整合进你的程序**,而是在程序运行时动态地申请并调用,所以程序的运行环境中必须提供相应的库.
+- 共享函数库的改变并不影响你的程序,所以共享函数库的升级比较方便.
+
+动态库出现的初衷是对于相同的库，多个进程可以共享同一个，以节省内存和磁盘资源。但是在磁盘和内存已经白菜价的今天，这两个作用已经显得微不足道了，那么除此之外动态库还有哪些存在的价值呢？从库开发角度来说，动态库可以隔离不同动态库之间的关系，减少链接时出现符号冲突的风险。而且对于 windows 等平台，动态库是跨越 VC 和 GCC 不同编译器平台的唯一的可行方式。
+
+```bash
+## 生成share object 文件
+$ cat hello.c
+#include <stdio.h>
+void hi() {
+    printf("Hello, Chandler!\n");
+}
+$ gcc -fPIC -shared -o libhello.so hello.c
+$ ls
+hello.c  libhello.so
+$ pwd
+/tmp/c
+
+## 编写c header文件, 即告诉调用者可以调用哪些function
+$ cat hi.h
+void hi();
+
+
+## 编写go file调用share object
+
+## cgo CFLAGS: -I./  // 这里表示头文件所在的位置
+## cgo LDFLAGS: -L/data/golang_code/cgolib/ -lhello  // 这里表示so库所在的位置
+$ cat go_so.go
+package main
+
+/*
+#cgo CFLAGS: -I./
+#cgo LDFLAGS: -L/data/golang_code/cgolib/ -lhello
+#include "hi.h"
+ */
+import "C"    // 注意这个地方与上面注释的地方不能有空行，并且不能使用括号如import ("C" "fmt")
+import "fmt"
+
+func main(){
+    C.hi()
+    fmt.Println("Hello c, welcome to go!")
+}
+roo
+$ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/data/golang_code/cgolib/
+## 调用c function成功
+$ go run go_so.go
+Hello, Chandler!
+Hello c, welcome to go!
+
+```
+
+##### library name
+
+share library通常以lib开头，比如`libsum.so`。
+
+第三方调用share object时，不用写`lib`直接写`sum`即可。
+
+共享库文件的命名规则与静态库类似，都有固定的前缀后缀。中间的 xxx 即为库名称。.so 表示这个文件是一个动态库文件。.1 通常表示库的版本号，这样可以实现多个库版本共存的需求。
+
+### init()
 
 每个package中的`init()`在导入时，都会被执行-- 
 
@@ -2573,3 +2788,6 @@ end
 1. https://segmentfault.com/a/1190000020086645
 2. https://space.bilibili.com/567195437/video
 3. https://www.zhihu.com/question/60426831/answer/176204563
+4. https://cloud.tencent.com/developer/article/1766867
+5. https://juejin.cn/post/7053450610386468894
+6. https://oldpan.me/archives/linux-a-so-o-tell

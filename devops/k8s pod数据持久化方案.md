@@ -89,6 +89,10 @@ mount("/home", "/test", "", MS_BIND, NULL)
 
 3）调用 `pivot_root` 或 `chroot`，改变容器进程的根目录。至此，容器再也看不到宿主机的文件系统目录了。
 
+#### Cinder volume
+
+https://stackoverflow.com/questions/40162641/kubernetes-cinder-volumes-do-not-mount-with-cloud-provider-openstack
+
 
 
 
