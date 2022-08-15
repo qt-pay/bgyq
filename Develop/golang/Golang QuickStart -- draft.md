@@ -527,6 +527,20 @@ $ du -sh server
 
 
 
+#### CGO_ENABLED=0 go install
+
+ `go get XXX` binary being dynamically compiled.
+
+When you download the binary with `go install`, by default it downloads with `CGO_ENABLED=1` (unless overriden), requiring most of the runtime libraries (including glibc) to be loaded at runtime. This might not work well in some container images, where the libraries are not present (e.g. images built from scratch/distro-less static images).
+
+So to avoid the dependency with the container image's dependencies, always download a statically compiled one by setting the above flag to 0. Use the downloaded binary in your docker context
+
+```bash
+CGO_ENABLED=0 go install xxx
+```
+
+
+
 ### go tool: 使用库文件编译
 
 go build 和 go install 都需要使用源码来进行编译。但是有时候我们只有.a或者.so文件。并不能获取到第三方库的源码，这时就需要静态链接库编译的技巧
@@ -823,7 +837,7 @@ func changeSlice(arrArg []int) {
 
 golang 所有的类型数据都有一个pair(type, value) ，这就是反射的实现。
 
-静态语言的反射，Python简单啊直接`dir()`
+静态语言的反射，Python很简单直接`dir()`
 
 #### int
 
@@ -839,11 +853,9 @@ golang 所有的类型数据都有一个pair(type, value) ，这就是反射的�
 
 浮点类型的值有float32和float64(没有 float 类型)
 
-#### string
+#### string：只读
 
 字符串是由字符组成的数组，C 语言中的字符串使用字符数组 `char[]` 表示。数组会占用一片连续的内存空间，而内存空间存储的字节共同组成了字符串，**Go 语言中的字符串只是一个只读的字节数组。**
-
-
 
 **Golang中string只是一个只读的字节数组**
 
@@ -881,17 +893,15 @@ func main() {
 
 string与[]byte在底层结构上是非常的相近（后者的底层表达仅多了一个cap属性，因此它们在内存布局上是可对齐的），这也就是为何builtin中内置函数copy会有一种特殊情况`copy(dst []byte, src string) int`的原因了。
 
+Java、Python 以及很多编程语言的字符串也都是不可变的，这种不可变的特性可以保证不会引用到意外发生改变的值，Go 语言的字符串可以作为哈希的键，所以如果哈希的键是可变的，不仅会增加哈希实现的复杂度，还可能会影响哈希的比较。
 
-
-只读只意味着字符串会分配到只读的内存空间，但是 Go 语言只是不支持直接修改 `string` 类型变量的内存空间，我们仍然可以通过在 `string` 和 `[]byte` 类型之间反复转换实现修改这一目的：
+只读只意味着字符串会分配到只读的内存空间，但是 Go 语言只是不支持直接修改 `string` 类型变量的内存空间，但仍然可以通过在 `string` 和 `[]byte` 类型之间反复转换实现修改这一目的：
 
 1. 先将这段内存拷贝到堆或者栈上；
 2. 将变量的类型转换成 `[]byte` 后并修改字节数据；
 3. 将修改后的字节数组转换回 `string`；
 
-Java、Python 以及很多编程语言的字符串也都是不可变的，这种不可变的特性可以保证我们不会引用到意外发生改变的值，而因为 Go 语言的字符串可以作为哈希的键，所以如果哈希的键是可变的，不仅会增加哈希实现的复杂度，还可能会影响哈希的比较。
-
-修改string
+应用场景：你不知道string的数据内容，但是只知道要修改第N个字符。
 
 ```go
 package main
@@ -919,16 +929,21 @@ turn new []byte to string: Aest
 str address: 0xc0000481e0
 ```
 
-end
+##### string-to-unit8:unsafe
 
-##### string-to-unit8
-
-通过unsafe和reflect包，可以实现另外一种转换方式，我们将之称为强转换
-
-这样性能肯定好，直接将string 底层结构题中执行数组的指针
+通过unsafe和reflect包，可以实现另外一种转换方式，称为强转换，可以直接将string 底层结构题中执行数组的指针。
 
 ```go
+package main
+
+import (
+	"reflect"
+	"unsafe"
+)
+
+
 // string 底层 结构体
+// src/runtime/string.go
 type stringStruct struct {
     // string 整体替换时即换了一个指针指向地址
     str unsafe.Pointer
@@ -952,7 +967,38 @@ func Bytes2String(b []byte) string {
 }
 ```
 
-end
+将string的底层数组地址赋值给slice结构体后，仍然不能修改这个`slice.Data`。因为string的内存地址空间是在只读内存空间的。
+
+**使用unsafe包将slice指向原来的string内存地址，这样即便转换了类型仍然无法修改string只读内存的内容。**
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/golang-string-addr.jpg)
+
+如下所示，类型转换成功了但是还是不能修改string执行的只读内存
+
+```go
+func main()  {
+	s := "test"
+	b := String2Bytes(s)
+	var test interface{}
+	test = b
+
+	s = Bytes2String(b)
+	fmt.Println(s)
+	_, ok := test.([]byte)
+	if ok{
+		fmt.Println("turn string to []byte, success")
+	}
+	b[1] = 65
+}
+// output
+test
+turn string to []byte, success
+unexpected fault address 0x565342
+fatal error: fault
+[signal 0xc0000005 code=0x1 addr=0x565342 pc=0x54c661]
+```
+
+
 
 #### array:大小固定
 
@@ -2426,11 +2472,22 @@ end
 
 ##### 别名and新类型
 
-type myType = int32 相当于别名，没有新的type metadata产生
+type myType = int32 相当于别名，没有新的type metadata产生。
+
+`byte`是`uint8`的一个内置别名，`rune`是`int32`的一个内置别名.
+
+```go
+// byte is an alias for uint8 and is equivalent to uint8 in all ways. It is
+// used, by convention, to distinguish byte values from 8-bit unsigned
+// integer values.
+type byte = uint8
+
+// rune is an alias for int32 and is equivalent to int32 in all ways. It is
+// used, by convention, to distinguish character values from integer values.
+type rune = int32
+```
 
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/golang-type-alias-and-newtype.jpg)
-
-
 
 #### struct
 
@@ -2481,6 +2538,42 @@ func main()  {
 end
 
 #### interface
+
+##### `Type Assertion`（断言）
+
+Golang断言是基于`interface{}`实现的。
+
+`Type Assertion`（断言）是用于`interface value`的一种操作，语法是`x.(T)`，`x`是`interface type`的表达式，而`T`是`asserted type`，被断言的类型。
+
+```go
+// 断言表达式1: 如果断言成功，就会返回值给res，如果断言失败，就会触发panic。
+func main()  {
+	b := [2]byte{11, 12}
+	var test interface{}
+	test = b
+	res := test.(int)
+	fmt.Println(res)
+}
+// output
+panic: interface conversion: interface {} is [2]uint8, not int
+
+// 断言表达式 2: 断言失败将 ok 的值设为 false ，表示断言失败，此时t 为 T 的零值。
+func main()  {
+
+	b := [2]byte{11, 12}
+	var test interface{}
+	test = b
+
+	res, ok := test.(int)
+	if ok{
+		fmt.Println("turn string to []byte, success")
+	}
+	fmt.Println(res)
+
+}
+// output
+0
+```
 
 
 

@@ -551,6 +551,12 @@ type eface struct {
 func TypeOf(i interface{}) Type {}
 ```
 
+##### pair
+
+接口类型的变量存储了一对值，英文叫pair
+
+> A variable of interface type stores a pair: the concrete value assigned to the variable, and that value's type descriptor. To be more precise, the value is the underlying concrete data item that implements the interface and the type describes the full type of that item.
+
 
 
 #### interface类型转换，汇编:articulated_lorry:
@@ -850,7 +856,7 @@ func convT2I(tab *itab, elem unsafe.Pointer) (i iface) {
 
 runtime.convT2I() 这个方法会生成一个 iface，在堆上生成 iface.data，并且会 typedmemmove()。笔者找了 2 个相关的 PR，感兴趣的可以看看。[optimize convT2I as a two-word copy when T is pointer-shaped](https://go-review.googlesource.com/c/go/+/20901/9)，[cmd/compile: optimize remaining convT2I calls](https://go-review.googlesource.com/c/go/+/20902)。这里仅仅涉及类型转换，所以在内存中构造出 *itab 和 unsafe.Pointer 就够用了。编译器觉得没有必要调用 runtime.convT2I() 再构造出 iface 多此一举。
 
-#### Type Assertion
+#### Type Assertion：断言
 
  Type assertion(断言)是用于 interface value 的一种操作，语法是` x.(T)`，x 是 interface type 的表达式，而 T 是 assertd type，被断言的类型。 
 
