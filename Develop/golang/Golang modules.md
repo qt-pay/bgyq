@@ -58,6 +58,14 @@ end
 
 几个不错的代理：https://goproxy.cn,direct 和 https://mirrors.aliyun.com/goproxy/,direct
 
+#### 核心
+
+- 尽量不要手动修改go.mod文件，通过go命令来操作go.mod文件
+- 利用go mod tidy进行自动整理操作。该模块会清理需求列表：删除不需要的需求项，添加需要的需求项
+- 利用go get升级或者降级某个依赖模块；go get -u升级所有依赖模块(直接以及间接)
+
+https://duyanghao.github.io/golang-module/
+
 #### 常见公共pkg仓库
 
 代码大多数在github或者google的仓库，所有需要翻墙或配置代理才行。

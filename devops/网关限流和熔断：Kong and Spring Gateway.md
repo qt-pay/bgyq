@@ -10,6 +10,10 @@
 
 假设，业务A有N个实例，每个实例配置的最大容量阈值是200，这在网关层面可以给业务A的接口可以配置的最大流量阈值是N * 200。假如N个实例中有某个实例异常了，那么其余实例在满网关入口流量满负载的情况下，剩余的N-1个实例会收到大于200的流量请求，极端场景会导致整个服务雪崩。
 
+此外，应用自身设置熔断和限流规则，可以防止不经过网关的东西流量（内部其他组件调用）。
+
+比如，组件A的QPS是500，而它调用的上游服务B的QPS是200，如果服务B本身不做保护会直接被A击穿。
+
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/spring-cloud-hystrix.png)
 
 #### 应用 and 接口
@@ -223,7 +227,13 @@ Sentinel通过引入 Sentinel API Gateway Adapter Common 模块，以此实现�
 
 这样的好处，就是网关拿到后端服务提供地址就可以做限流、认证和熔断等措施了。
 
-#### 服务内部限流
+这个网关描述的也挺清晰
+
+Apache APISIX + Nacos 可以将各个微服务节点中与业务无关的各项控制，集中在 Apache APISIX 中进行统一管理，即**通过 Apache APISIX 实现接口服务的代理和路由转发的能力**。在 Nacos 上注册各个微服务后，Apache APISIX 可以通过 Nacos 的服务发现功能获取服务列表，查找对应的服务地址从而实现动态代理。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/gateway-and-nacos.webp)
+
+#### 服务内部限流:field_hockey:
 
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/internal-limit-rate.jpg)
 

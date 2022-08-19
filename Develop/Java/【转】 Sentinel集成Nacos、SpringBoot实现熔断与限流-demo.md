@@ -273,6 +273,8 @@ public String getConsumerInfo(@PathVariable("id") String id){
 
 https://www.cnblogs.com/ludangxin/p/16051873.html
 
+
+
 feign是声明式的web service客户端，它让微服务之间的调用变得更简单了，类似controller调用service。Spring Cloud集成了Ribbon和Eureka，可在使用Feign时提供负载均衡的http客户端。
 
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/spring-cloud-feign.png)
@@ -281,7 +283,7 @@ Feign中本身已经集成了Ribbon依赖和自动配置，因此我们不需要
 
 
 
-
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/fegin-hystrix.jpg)
 
 Feign是一种比较规范的微服务调用方式，这也是Spring Cloud Netflix项目提供的服务调用框架。使用Feign进行服务调用时需要额外引入其依赖信息：
 

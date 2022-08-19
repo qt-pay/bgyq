@@ -12,9 +12,11 @@
 
 自己本身不清楚架构是什么，外加不会使用画图工具，这才是我内心拒绝画图和画PPT的原因吧。**因为**我自己都不会，更别说如何清晰的表达出来了。
 
-### 演示视图
+### 物料库和图标库
 
-R230 G0 B18  华三红 PPT
+物料和图标是基本元素，然后才是逻辑连线。
+
+### 演示视图
 
 PPT --> 演示者视角 --> 先点最小化右边的窗口，再点击最小化 --> alt + tab 切到全屏ppt --> 共享屏幕选择全屏ppt --> alt-tab 切换演示者视角
 
@@ -78,9 +80,19 @@ visio默认形状定义比较少，无法画多个连线，比如三条平行。
 
 http://www.tup.tsinghua.edu.cn/upload/books/yz/069879-01.pdf
 
+#### 避免画几何图形
+
 注意：从多个点连线时，注意不要点错，点成扩展形状时，会使得多条连线组成一个大的整体形状。
 
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/visio-connect.png)
+
+#### 连接器对齐
+
+连接两个图形时，可以先画出连接器，然后点击`X`，然后使用`Ctrl+鼠标左键`微调连接点。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/visiso-connector.jpg)
+
+
 
 ### Word 设置多级标题：自定义标题
 

@@ -93,19 +93,101 @@ mount("/home", "/test", "", MS_BIND, NULL)
 
 https://stackoverflow.com/questions/40162641/kubernetes-cinder-volumes-do-not-mount-with-cloud-provider-openstack
 
+### emptydir
+
+根据官方给出的最佳使用实践的建议，emptyDir可以在以下几种场景下使用：
+
+- 临时空间，例如基于磁盘的合并排序
+- 设置检查点以从崩溃事件中恢复未执行完毕的长计算
+- 保存内容管理器容器从Web服务器容器提供数据时所获取的文件
+
+默认情况下，emptyDir可以使用任何类型的由node节点提供的后端存储。如果你有特殊的场景，需要使用tmpfs作为emptyDir的可用存储资源也是可以的，只需要在创建emptyDir卷时增加一个emptyDir.medium字段的定义，并赋值为”Memory”即可。
+
+HostPath 不能挂载tmpfs。
+
+### HostPath
+
+hostPath类型则是映射node文件系统中的文件或者目录到pod里。在使用hostPath类型的存储卷时，也可以设置type字段，支持的类型有文件、目录、File、Socket、CharDevice和BlockDevice。
+
+使用场景：
+
+- 当运行的容器需要访问Docker内部结构时，如使用hostPath映射/var/lib/docker到容器；
+- 当在容器中运行cAdvisor时，可以使用hostPath映射/dev/cgroups到容器中；
+- 允许 Pod 指定给定的 hostPath 在运行 Pod 之前是否应该存在，是否应该创建以及应该以什么方式存在。
+
+**emptyDir和hostPath在功能上的异同分析**
+
+- 二者都是node节点的本地存储卷方式；
+- emptyDir可以选择把数据存到tmpfs类型的本地文件系统中去，hostPath并不支持这一点；
+- hostPath除了支持挂载目录外，还支持File、Socket、CharDevice和BlockDevice，既支持把已有的文件和目录挂载到容器中，也提供了“如果文件或目录不存在，就创建一个”的功能；
+- emptyDir是临时存储空间，完全不提供持久化支持；
+- hostPath的卷数据是持久化在node节点的文件系统中的，即便pod已经被删除了，volume卷中的数据还会留存在node节点上；
+
+### LocalVolume:bind_mount
+
+The Local Persistent Volumes feature has been promoted to GA in Kubernetes 1.14. 
+
+The biggest difference is that the Kubernetes scheduler understands which node a Local Persistent Volume belongs to. With HostPath volumes, a pod referencing a HostPath volume may be moved by the scheduler to a different node resulting in data loss. But with Local Persistent Volumes, the Kubernetes scheduler ensures that a pod using a Local Persistent Volume is always scheduled to the same node.
+
+While HostPath volumes may be referenced via a Persistent Volume Claim (PVC) or directly inline in a pod definition, Local Persistent Volumes can only be referenced via a PVC. This provides additional security benefits since Persistent Volume objects are managed by the administrator, preventing Pods from being able to access any path on the host.
+
+最重要的区别，就是Local PV和具体节点是有关联的，这意味着使用了Local PV的pod，重启多次都会被Kubernetes scheduler调度到同一节点，而如果用的是HostPath Volume，每次重启都可能被Kubernetes scheduler调度到新的节点，然后使用同样的本地路径、
+
+HostPath Volume的时候，既可以在PVC声明，又可以直接写到Pod的配置中，但是Local PV只能在PVC声明，对于PV资源，通常都有专人管理，这样就避免了Pod开发者擅自使用本地磁盘带来的冲突和风险、
+
+静态provisioner配置程序仅支持发现和管理挂载点（对于Filesystem模式存储卷）或符号链接（对于块设备模式存储卷）。 对于基于本地目录的存储卷，必须将它们通过bind-mounted的方式绑定到发现目录中。
+
+使用 local 卷时，需要使用 PersistentVolume 对象的 nodeAffinity 字段。 它使 Kubernetes 调度器能够将使用 local 卷的 Pod 正确地调度到合适的节点。可以将 PersistentVolume 对象的 volumeMode 字段设置为 “Block”（而不是默认值 “Filesystem”），以将 local 卷作为原始块设备暴露出来。 
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: example-pv
+spec:
+  capacity:
+    storage: 100Gi
+  # volumeMode field requires BlockVolume Alpha feature gate to be enabled.
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: local-storage
+  local:
+    path: /mnt/disks/ssd1
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - example-node
+```
 
 
 
+#### mode point??
 
+如下
 
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/local-pv-spec.png)
+
+下面的挂载显示就很离谱
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/local-pv-with-blockmount.png)
 
 ### NFS/NAS
 
 #### 不同deployment共享数据目录
 
+
+
 场景：
 
 应用模块A和应用模块B都需要同一个数据目录，A模块多副本写入，B模块多副本读
+
+**You cannot bind 2 pvc to the same pv**. **But** you can bind 2 pv on the same nfs path。
 
 解决：
 在NFS filesystem下创建一个sub dir，让后创建两个不同的PV但是都映射到同提个sub dir目录，然后通过pvc挂载给不同的deployment，实现不同组件共享同一个数据目录。
@@ -113,3 +195,5 @@ https://stackoverflow.com/questions/40162641/kubernetes-cinder-volumes-do-not-mo
 ### 引用
 
 1. https://www.lixueduan.com/post/kubernetes/09-volume/
+1. https://blog.z0ukun.com/?p=2996
+

@@ -71,6 +71,12 @@ $ curl -F "submit=OK;headers=\"X-submit-type: OK\"" example.com
 
 demo with basic auth
 
+HTTP Basic，Session，Token 三种认证方法。
+
+- Basic 认证：账密认证
+- Session 认证：session有效期内使用session ID
+- Token 认证：Token
+
 ```bash
 # -u, --user <user:password>
 #  Specify the user name and password to use for server authenticatio
