@@ -52,9 +52,9 @@ https://zhuanlan.zhihu.com/p/33487078
 
 ### SmartArt
 
-！！！！ 
-
 里面包含了很多奇怪的好用的形状，比如向上的箭头+文字等。
+
+但是这个形状都很丑还得去找模板
 
 ### 复制 and 复制幻灯片
 
@@ -69,6 +69,20 @@ https://zhuanlan.zhihu.com/p/33487078
 #### 动画组播
 
 在“动画窗格”可以将两个动画通过拖拉，将两个零散的动画合到一块。
+
+### PPT快捷键
+
+Ctrl+D ： 复制并粘贴
+
+Ctrl+G：组合图形
+
+Alt+F12： 调整元素层级
+
+### PPT连接器
+
+要点亮两个绿点--
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/ppt-连接器.jpg)
 
 ### Visio
 

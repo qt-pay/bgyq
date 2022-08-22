@@ -155,7 +155,136 @@ L7 VPN只能针对应用层数据、比如： chrome访问页面、远程到云�
 
   https://cshihong.github.io/2019/08/21/L2TP-VPN%E5%9F%BA%E6%9C%AC%E5%8E%9F%E7%90%86/
 
-  
+
+### EVPN
+
+EVPN实现VxLAN控制平面的自动配置。
+
+EVPN不允许二层流量跨越VNI。
+
+Overlay的实现常用：evpn+vxlan
+
+EVPN参考了MP-BGP（MultiProtocol BGP）的机制。在深入理解EVPN的工作原理前，我们先对MP-BGP（MultiProtocol BGP）做下简单回顾。
+
+传统的BGP-4使用Update报文在对等体之间交换路由信息。一条Update报文可以通告一类具有相同路径属性的可达路由，这些路由放在NLRI（**Network Layer Reachable Information**，网络层可达信息）字段中。因为BGP-4只能管理IPv4单播路由信息，为了提供对多种网络层协议的支持（例如IPv6、组播），发展出了MP-BGP。MP-BGP在BGP-4基础上对NLRI作了新扩展。玄机就在于新扩展的NLRI上，扩展之后的NLRI增加了地址族的描述，可以用来区分不同的网络层协议，例如IPv6单播地址族、VPN实例地址族等。
+
+类似的，EVPN也是借用了MP-BGP的机制，在L2VPN地址族下定义了新的子地址族——EVPN地址族，在这个地址族下又新增了一种NLRI，即EVPN NLRI。EVPN NLRI定义了几种BGP EVPN路由类型，这些路由可以携带主机IP、MAC、VNI、VRF等信息。这样，当一个VTEP学习到下挂的主机的IP、MAC地址信息后，就可以通过MP-BGP路由将这些信息发送给其他的VTEP，从而在控制平面实现主机IP、MAC地址的学习，抑制了数据平面的泛洪。
+
+采用EVPN作为VXLAN的控制平面具有以下优势：
+
+- 可实现VTEP自动发现、VXLAN隧道自动建立，从而降低网络部署、扩展的难度。
+- EVPN可以同时发布二层MAC信息和三层路由信息。
+- 可以减少网络中的泛洪流量。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/evpn-nlri.jpg)
+
+#### mac learn
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/evpn-mac-learn.jpg)
+
+#### 集中式网关跨网段
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/evpn-集中式网关-1.jpg)
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/evpn-集中式网关2.png)
+
+
+
+#### 分布式网关跨网段
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/evpn-分布式网关-1.jpg)
+
+L3 VNI 和 L3 VPN 有映射关系
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/evpn-分布式网关-2.jpg)
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/evpn-分布式网关-3.jpg)
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/evpn-分布式网关-4.jpg)
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/evpn-分布式网关-5.jpg)
+
+隧道传输和解封装
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/evpn-分布式网关-6.jpg)
+
+##### L3 VPN info
+
+VPN用来区别不同租户的路由表，因为一个leaf下面可能
+
+
+
+华为配置L3 VPN
+
+配置与EVPN实例交互路由的VPN实例。
+
+**当Overlay网络是IPv4网络时，执行如下操作步骤：**
+
+1. 执行命令**system-view**，进入系统视图。
+
+2. 执行命令**ip vpn-instance vpn-instance-name**，创建VPN实例，并进入VPN实例视图。
+
+   缺省情况下，未创建VPN实例。
+
+3. 执行命令[**vxlan vni**] *vni-id*，创建VXLAN网络标识VNI并关联VPN实例。
+
+   缺省情况下，VNI与VPN实例没有绑定。
+
+4. 执行命令[**ipv4-family**]，使能VPN实例IPv4地址族，并进入VPN实例IPv4地址族视图。
+
+   缺省情况下，未使能VPN实例的IPv4地址族。
+
+5. 执行命令[**route-distinguisher**] *route-distinguisher*，配置VPN实例IPv4地址族的RD。
+
+   缺省情况下，没有为VPN实例IPv4地址族配置RD。
+
+6. （可选）执行命令[**vpn-target**]*vpn-target* &<1-8> [ **both** | **export-extcommunity** | **import-extcommunity** ]，为VPN实例IPv4地址族配置VPN-target扩展团体属性。
+
+   缺省情况下，没有为VPN实例IPv4地址族配置入方向和出方向VPN-Target扩展团体属性列表。
+
+   如果当前节点还需要与同一VPN实例的其他节点交换L3VPN路由，则需要执行此步骤，配置VPN实例本身的VPN-Target值。
+
+7. 执行命令[**vpn-target**]*vpn-target* &<1-8> [ **both** | **export-extcommunity** | **import-extcommunity** ] **evpn**，为VPN实例IPv4地址族配置EVPN路由的VPN-target扩展团体属性。
+
+   当本端设备向邻居发布EVPN的IP前缀路由时，该路由携带此步骤为EVPN路由设置的出方向VPN-Target属性列表中的所有VPN-Target属性；当本端设备向邻居发布EVPN的IRB路由时，该路由携带的是BD下EVPN实例的出方向VPN-Target属性列表中的所有VPN-Target属性。
+
+   当本端设备收到的IRB路由或IP前缀路由携带的VPN-Target属性，与此步骤为EVPN路由设置的入方向VPN-Target属性列表中的值存在交集时，才允许该IRB路由或IP前缀路由交叉到本地VPN实例IPv4地址族路由表。
+
+8. （可选）执行命令[**import route-policy**]policy-name **evpn**，将当前VPN实例IPv4地址族与一条入方向Route-Policy进行关联，该Route-Policy用来过滤引入到当前VPN实例IPv4地址族的EVPN路由。
+
+   如果需要更精确地控制进入到当前VPN实例IPv4地址族的EVPN路由，可以执行此步骤指定入方向Route-Policy来过滤EVPN路由信息，以及为通过过滤条件的路由设置路由属性。
+
+9. （可选）执行命令[**export route-policy**] *policy-name* **evpn**，将当前VPN实例IPv4地址族与一条出方向Route-Policy进行关联，该Route-Policy用来过滤当前VPN实例IPv4地址族发布的EVPN路由。
+
+   如果需要更精确地控制当前VPN实例IPv4地址族发布的EVPN路由，可以执行此步骤指定出方向Route-Policy来过滤发布的EVPN路由信息，以及为通过过滤条件的路由设置路由属性。
+
+10. 执行命令quit，退出VPN实例IPv4地址族视图。
+
+11. 执行命令quit，退出VPN实例视图。
+
+```bash
+[~NPE2] ip vpn-instance vpn1
+[*NPE2-vpn-instance-vpn1] ipv4-family
+[*NPE2-vpn-instance-vpn1-af-ipv4] route-distinguisher 20:2
+[*NPE2-vpn-instance-vpn1-af-ipv4] vpn-target 1:1 both
+[*NPE2-vpn-instance-vpn1-af-ipv4] vpn-target 2:2 both evpn
+[*NPE2-vpn-instance-vpn1-af-ipv4] evpn mpls routing-enable
+[*NPE2-vpn-instance-vpn1-af-ipv4] quit
+[*NPE2-vpn-instance-vpn1] quit
+[*NPE2] interface GigabitEthernet 0/2/0
+[*NPE2-GigabitEthernet0/2/0] ip binding vpn-instance vpn1
+[*NPE2-GigabitEthernet0/2/0] ip address 192.168.30.1 24
+[*NPE2-GigabitEthernet0/2/0] quit
+[*NPE2] bgp 100
+[*NPE2-bgp] ipv4-family vpn-instance vpn1
+[*NPE2-bgp-vpn1] advertise l2vpn evpn
+[*NPE2-bgp-vpn1] import-route direct
+[*NPE2-bgp-vpn1] quit
+[*NPE2-bgp] quit
+[*NPE2] commit
+```
+
+
 
 ### VPN常见形式
 

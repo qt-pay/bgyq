@@ -243,6 +243,21 @@ You can also request a specific IP address through Kubernetes annotations with C
   ```yaml
    annotations:
         "cni.projectcalico.org/ipAddrs": "[\"192.168.0.1\"]"
+        
+  ## complete yaml
+  apiVersion: v1
+  kind: Pod
+  metadata:
+    name: myapp-pod
+    labels:
+      app: myapp
+    annotations:
+      cni.projectcalico.org/ipAddrs: "[\"10.224.0.20\"]"
+  spec:
+    containers:
+    - name: myapp-container
+      image: busybox
+      command: ['sh', '-c', 'echo Hello Kubernetes! && sleep 3600']
   ```
 
 - `cni.projectcalico.org/ipAddrsNoIpam`: A list of IPv4 and/or IPv6 addresses to assign to the Pod, bypassing IPAM. Any IP conflicts and routing have to be taken care of manually or by some other system. Calico will only distribute routes to a Pod if its IP address falls within a Calico IP pool. If you assign an IP address that is not in a Calico IP pool, you must ensure that routing to that IP address is taken care of through another mechanism.
@@ -1991,5 +2006,6 @@ Destination     Gateway         Genmask         Flags Metric Ref    Use Iface
 3. https://imliuda.com/post/1015
 4. https://www.v2k8s.com/kubernetes/t/205
 5. https://www.bladewan.com/2020/11/18/calico_ops/
-5. https://tech.ipalfish.com/blog/2020/03/06/kubernetes_container_network/
-5. https://mp.weixin.qq.com/s/tk_Zlt_zVAOX9IhDuGkYFA
+6. https://tech.ipalfish.com/blog/2020/03/06/kubernetes_container_network/
+7. https://mp.weixin.qq.com/s/tk_Zlt_zVAOX9IhDuGkYFA
+8. https://blog.51cto.com/zhangxueliang/3223396
