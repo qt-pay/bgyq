@@ -4,6 +4,18 @@
 
  Open Shortest Path First
 
+### RIP cons
+
+RIP路由协议只是以简单度量为单位，无法感知整个路由链路的状态，从而会导致无法选择最优链路。
+
+如下，RTB --> RTD只有一跳，RTB-->RTC-->RTD是两跳，RIP会选择B到D直连，但是B和D之间链路只有1M，
+
+明显不是最优链路。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/rip-cons.png)
+
+
+
 ### 作业
 
 

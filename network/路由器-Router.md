@@ -8,6 +8,67 @@
 
 数据中心互联（DCI）是一种实现多个数据中心之间互联互通的网络解决方案。
 
+### 路由
+
+有去有回的路由条目才是完整的路由。
+
+#### 路由条目组成
+
+一条路由条目需要有可达的下一跳地址（通常是网关）和 正确的**出接口**
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/Router-interface.png)
+
+#### 路由条目类型
+
+路由表中存在的路由条目都是经过路由算法计算的最优路径了。
+
+```bash
+[Huawei]display ip routing-table pro ?
+  bgp     Border Gateway Protocol (BGP) routes
+  direct  Direct routes
+  isis    IS-IS routing protocol defined by ISO
+  ospf    Open Shortest Path First (OSPF) routes
+  rip     Routing Information Protocol (RIP) routes
+  static  Static routes
+  unr     User network routes
+```
+
+复杂路由表会有各种路由协议类型的路由信息。
+
+20.0.0.0/8 和 20.0.0.1/32 相当于直达列车和绕路列车，匹配优先级选路时，肯定32精确匹配的优先级高。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/huawei-ip-routing-table.png)
+
+##### Preference 
+
+Preference：优先级，比较**不同路由来源**到达相同目标网络的优先级，数值越小优先级越高。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/route-pre.png)
+
+##### Cost
+
+Cost：度量值，比较**相同路由来源**到达相同目标网络的不同路径的优先级，数值越小优先级越高。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/route-cost.png)
+
+
+
+
+
+#### 路由匹配策略
+
+路由条目越多，路由器遍历路由表的时间肯定越长。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/路由条目匹配算法.png)
+
+每当路由选路时，路由器会遍历一边路由表，从而才能对比选择一个最优路径。
+
+目标地址8.8.8.8 和 8.8.8.0/24网络地址去匹配，能匹配到28位一致。
+
+即00001000匹配到8.8.8.0的00000000还能匹配4位。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/路由匹配demo.png)
+
 ### 策略路由 and 路由策略
 
 **策略路由**，即**PBR（Policy-Based Routing）**，与传统的基于IP报文目的地址查找路由表进行转发不同，它可以依据用户自定义的策略进行报文转发。这个自定义的策略，可以根据报文的来源、应用、协议以及报文长度等特征来进行定义。报文可以优先根据设置的PBR进行转发，因此策略路由给组网提供了极大的灵活性。
