@@ -46,6 +46,8 @@
 
 租户云主机访问互联网区（默认地址网段）时，流量到达Leaf后转发到Internet Border，Internet Border解封装后转发到Internet FW，在Internet FW上使用公网弹性网络地址池（Internet EIPpool）中的弹性IP进行NAT后转发到互联网。
 
+
+
 #### 专线区
 
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/fw-as-border.jpg)
@@ -57,6 +59,8 @@
   接入leaf交换机负载数据中心vxlan数据包解封装。
 
 从虚机发出的流量，源IP是VPC内虚机的IP，目的IP为用户数据中心内部的网络IP，流量从VM出发，在OVS经过VLAN封装，到达接入交换机Leaf经过VXLAN封装后，经过核心交换机Spine，转到专线交换机专线Leaf，流量在专线Leaf上解封装VXLAN之后，根据不同的VRF封装指定的VLAN到达专线FW，在专线FW上经过一定的策略或者NAT规则之后，根据跨VRF的路由转换为该用户的专线VRF到达专线接入交换机ACC，最后经过专线VLAN到达用户数据中心。
+
+租户云主机访问公共服务区&DMZ区时，根据报文目的地址为预定定义的DMZ网段A，流量经过VXLAN封装后转发到Intranet Border，Intranet Border解封装后转发到Intranet FW，在Intranet FW上使用内网弹性网络地址池（Intranet EIPpool）中的弹性IP进行NAT后转发到公共服务区&DMZ区
 
 #### 核心区
 

@@ -10,7 +10,7 @@
 
 ### 路由
 
-有去有回的路由条目才是完整的路由。
+通讯是双向的，有去有回的路由条目才是完整的路由。
 
 #### 路由条目组成
 
@@ -68,6 +68,112 @@ Cost：度量值，比较**相同路由来源**到达相同目标网络的不同
 即00001000匹配到8.8.8.0的00000000还能匹配4位。
 
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/路由匹配demo.png)
+
+#### 静态路由
+
+使用场景：
+
+比如k8s 集群 calico网络，想要将容器网段添加到核心交换机，如果不想使用动态路由协议，增加原有环境的变更风险，就可以在核心交换机上配置静态路由来实现容器网段的对外发现。
+
+特点：
+
+* 配置简单、开销小
+* 需要管理员通过手动配置进行添加和维护
+* 无法根据拓扑的变化进行动态的相应
+* 适用于“组网规模较小”的场景，如网络规模大或者变化频繁，则维护成本很高
+* 在大型网络中往往采取动、静结合方式
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/ip-route-static.png)
+
+静态路由支持load balancer，简单的round-robin
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/ip-static-route-lb.png)
+
+静态路由通过Preference实现主备链路
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/ip-static-route-backup.png)
+
+#### 缺省路由
+
+缺省路由：一种特殊的路由，能匹配所有的网络。
+
+缺省路由，可以通过静态路由配置，也可以通过动态路由协议发布。
+
+在路由表中，以到网络0.0.0.0（掩码为0.0.0.0）的形式出现，通常用于末梢网络（如：家用上网（上网流量不确定去往哪里），企业出口）
+
+eg：ip route-static 0.0.0.0 0.0.0.0 Next_hop_IP/Next_inf
+
+#### 动态路由
+
+动态路由，路由器自需要维护好自己的路由信息，然后通过路由协议来学习和同步其他路由器的路由信息。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/dynamic-route-1.png)
+
+### 路由协议总览：动态路由
+
+0.0 静态路由没路由协议这回事
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/dynamic-route-2.png)
+
+路由协议分为IGP和EGP两大类：
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/dynamic-route-3.png)
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/dynamic-route-4.png)
+
+BGP用于连接不同AS
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/dynamic-route-5.png)
+
+#### Autonomous system
+
+Autonomous systems divide global external networks into individual routing domains, where local routing policies are applied. This organization simplifies routing domain administration and simplifies consistent policy configuration.
+
+
+
+Each autonomous system can support multiple interior **routing protocols** that dynamically exchange routing information through route redistribution. The Regional Internet Registries assign a unique number to each public autonomous system that directly connects to the Internet. This autonomous system number (AS number) identifies both the routing process and the autonomous system.
+
+#### DV and LS
+
+Distance-Vector: 不了解链路状态（链路带宽等），仅局部最优，会导致无法选成最优路由
+
+Link-State: 基于SPF算法，了解全局路径信息，类似地图。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/dv-and-ls.png)
+
+ #### 组播路由协议
+
+使用场景，视频点播/直播或者地铁车站视频投放
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/multi-broadcast-route-protocol.png)
+
+#### 路由协议操作规则
+
+* 路由协议是**接口上**运行的（类似连接器需要两端一致才能接通）；
+* 只能学习和发布相同协议已知的路由信息；
+* 如果不同的路由协议间需要交换路由信息，就需要注入（import）。类似强行加入静态路由。
+
+如下，通过路由注入功能，R2将OSPF路由信息转成RIP路由信息注入给R1。
+
+操作命令：import-route ospf 1
+
+这就是类似通过编程实现数据格式的转换和插入。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/route-info-import.jpg)
+
+#### 路由器收敛
+
+* 当前所有路由表包含相同网络可达性信息
+* 网络（路由）进入一个稳定状态
+* 网络在达到收敛前无法完全正常工作
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/路由器-收敛.png)
+
+#### 路由协议衡量指标
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/路由器衡量指标.png)
+
+普适性：比如BGP协议很厉害，什么网络架构规模都支棱得起来，但是在小型网络环境没必要使用BGP。因为BGP对路由设备有较高要求，性能要求也高。有时，你想使用BGP但是你的网络设备可能不支持BGP。
 
 ### 策略路由 and 路由策略
 

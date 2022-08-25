@@ -12,9 +12,21 @@ Protobuf（Protocol buffers）是由Google开发的一种二进制协议，用�
 
 通常，存放proto文件的目录为`./pb/`。
 
+
+
 ### protoc安装
 
 下载不同操作系统对应的二进制文件，然后放到系统变量PTAH中即可执行`protoc`
+
+Protobuf 在 `.proto` 定义需要处理的结构化数据，可以通过 `protoc` 工具，将 `.proto` 文件转换为 C、C++、Golang、Java、Python 等多种语言的代码，兼容性好，易于使用。
+
+Golang 中使用 protobuf，还需要安装 protoc-gen-go，这个工具用来将 `.proto` 文件转换为 Golang 代码。
+
+```bash
+$ go get -u github.com/golang/protobuf/protoc-gen-go
+```
+
+
 
 ### protoc 语法
 
@@ -570,6 +582,24 @@ $ md5sum a.pb.go
 4ff25245f2602a4dac0f6c067db2de49  a.pb.go
 
 ```
+
+end
+#### 推荐风格
+
+- 文件(Files)
+  - 文件名使用小写下划线的命名风格，例如 lower_snake_case.proto
+  - 每行不超过 80 字符
+  - 使用 2 个空格缩进
+- 包(Packages)
+  - 包名应该和目录结构对应，例如文件在`my/package/`目录下，包名应为 `my.package`
+- 消息和字段(Messages & Fields)
+  - 消息名使用首字母大写驼峰风格(CamelCase)，例如`message StudentRequest { ... }`
+  - 字段名使用小写下划线的风格，例如 `string status_code = 1`
+  - 枚举类型，枚举名使用首字母大写驼峰风格，例如 `enum FooBar`，枚举值使用全大写下划线隔开的风格(CAPITALS_WITH_UNDERSCORES )，例如 FOO_DEFAULT=1
+- 服务(Services)
+  - RPC 服务名和方法名，均使用首字母大写驼峰风格，例如`service FooService{ rpc GetSomething() }`
+
+
 
 #### gRPC service编译
 

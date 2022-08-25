@@ -823,6 +823,19 @@ func changeSlice(arrArg []int) {
 
 使用场景：做orm和一些将json自动解析为结构体的操作。
 
+### 语法糖
+
+#### `...`
+
+```go
+// 合并两个slice
+s_less := []int{1, 3, 5}
+s_more := []int{2, 4, 6}
+var s_new []int
+s_new = s_new.append(s_new, s_less...)
+s_new = s_new.append(s_new, s_more...)
+```
+
 
 
 ### 类型元数据
@@ -1059,57 +1072,6 @@ fmt.Println(len(s3), cap(s3)) // 2 4
 - You create a slice either by a **slice literal** or a call to the `make`function, which takes the **length** and an optional **capacity** as arguments.
 - The built-in `len`and `cap` functions retrieve the length and capacity.
 
-
-
-区别slice 和 array，核心：slice 复制是指针的拷贝，array是值，因为array申请好后长度不可变。
-
-```go
-// slice结构体data字段存了指向的内存地址
-// 直接创建slice变量时，系统默认给你创建了。
-// slice指向的data内存地址，不够时会字段扩容
-// so,slice 有bug
-// slice_row  
-// slice_s1 = slice_row
-// extend slice_row to slice data memory address change
-// slice_s2 = slice_row
-// Now, slice_s1 不等于 slice_s2
-type SliceHeader struct {
-	Data uintptr
-	Len  int
-	Cap  int
-}
-```
-
-end
-
-即slice 引用传递，array值传递
-
-```go
-package main
-import (
-	"fmt"
-)
-
-func main(){
-	s := []int{1,2,3}
-	a := [3]int{1,2,3}
-
-	s1 := s
-	a1 := a
-
-	a[2] = 4
-	s[2] = 4
-
-	fmt.Println("a1:", a1)
-	fmt.Println("s1:", s1)
-}
-// output
-a1: [1 2 3]
-s1: [1 2 4]
-```
-
-end
-
 make是Go的内置函数，专门用于分配和初始化指定大小的slice、map、chan类型，它返回的是一个type。而new则不同，new返回的是一个*type,也就是一个指针类型，指向type的零值。
 
 在使用make初始化slice的时候，其第二个参数是slice的长度length（必填，可为0），第三个参数是容量capacity（选填），new的话只有一个参数。
@@ -1134,7 +1096,7 @@ package main
 import "fmt"
 func main()  {
 	li := make([]string, 5, 5)
-	li[0] = "dodo"
+	li[0] = "Robin"
 	li[1] = "hi"
     // 传统C写法： for key=0;key<len(li);key++{}
 	for key, value := range li{
@@ -1142,11 +1104,78 @@ func main()  {
 	}
 }
 // output
-0 dodo
+0 Robin
 1 hi
 2 
 3 
 4 
+```
+
+区别slice 和 array：slice 复制是指针的拷贝，array是值，因为array申请好后长度不可变。
+
+Golang都是值拷贝。
+
+```go
+// slice结构体data字段存了指向的内存地址
+// 直接创建slice变量时，系统默认给你创建了。
+// slice指向的data内存地址，不够时会字段扩容
+// so,slice 有bug
+// slice_row  
+// slice_s1 = slice_row
+// extend slice_row to slice data memory address change
+// slice_s2 = slice_row
+// Now, slice_s1 不等于 slice_s2
+type SliceHeader struct {
+	Data uintptr
+	Len  int
+	Cap  int
+}
+```
+
+##### slice值传递
+
+Go的slice类型中包含了一个array指针以及len和cap两个int类型的成员。
+
+Go中的参数传递实际都是值传递，将slice作为参数传递时，函数中会创建一个slice参数的副本，这个副本同样也包含array,len,cap这三个成员。
+
+副本中的array指针与原slice指向同一个地址，所以当修改副本slice的元素时，原slice的元素值也会被修改。但是如果修改的是副本slice的len和cap时，原slice的len和cap仍保持不变。
+
+```go
+func main() {
+	s := []int{1,2,3}
+	a := [3]int{1,2,3}
+
+	sCopy := s
+	aCopy := a
+
+	a[2] = 4
+	s[2] = 4
+	fmt.Println("source a:", a)
+	fmt.Println("aCopy:", aCopy)
+	fmt.Println("source s:", s)
+	fmt.Println("sCopy:", sCopy)
+}
+// output
+source a: [1 2 4]
+aCopy: [1 2 3]
+source s: [1 2 4]
+sCopy: [1 2 4]
+```
+
+如果在操作副本时由于扩容操作导致重新分配了副本slice的array内存地址，那么之后对副本slice的操作则完全无法影响到原slice，包括slice中的元素。
+
+```go
+func main() {
+	s := []int{1,2,3,4,5}
+	sCopy := s
+	sCopy = append(sCopy, 9)
+	fmt.Println("source s", s, "capability: ", cap(s))
+	fmt.Println("sCopy", sCopy, "capability: ", cap(sCopy))
+}
+// output
+source s [1 2 3 4 5] capability:  5
+sCopy [1 2 3 4 5 9] capability:  10
+
 ```
 
 end
@@ -1170,9 +1199,22 @@ type byte = uint8
 
 end
 
-#### map： 必用make()???
+#### map： 引用类型
 
-`var countGoID  = make(map[int64]int)` 这样也行
+创建map
+
+```go
+ageMp := make(map[string]int)
+// 指定 map 长度
+ageMp := make(map[string]int, 8)
+
+// ageMp 为 nil，不能向其添加元素，会直接panic
+var ageMp map[string]int
+
+// 这样可以,类似于先声明在初始化。
+var m map[string]interface{}
+m = make(map[string]interface{})
+```
 
 One of the most useful data structures in computer science is the hash table. Many hash table implementations exist with varying properties, but in general they offer fast lookups, adds, and deletes. Go provides a built-in map type that implements a hash table.
 
@@ -1181,8 +1223,6 @@ hash table 是计算机数据结构中一个最重要的设计。大部分 hash 
 map 的设计也被称为 “The dictionary problem”，它的任务是设计一种数据结构用来维护一个集合的数据，并且可以同时对集合进行增删查改的操作。最主要的数据结构有两种：`哈希查找表（Hash table）`、`搜索树（Search tree）`。
 
 哈希查找表一般会存在“碰撞”的问题，就是说不同的 key 被哈希到了同一个 bucket。一般有两种应对方法：`链表法`和`开放地址法`。
-
-wow, panic
 
 ```go
 package main
@@ -1225,7 +1265,13 @@ test address: 0x0
 test is nil
 panic: assignment to entry in nil map
 
+```
 
+end
+
+##### makemap
+
+```go
 // make(map[string]int) 通过汇编查看调用的是 makemap()
 func makemap(t *maptype, hint int64, h *hmap, bucket unsafe.Pointer) *hmap {
     // 省略各种条件检查...
@@ -1273,14 +1319,14 @@ import (
 )
 
 func test_map(m_arg map[string]int){
-	fmt.Println("func edit m: m[\"dodo\"] = 20 ")
-	m_arg["dodo"] = 20
+	fmt.Println("func edit m: m[\"Robin\"] = 20 ")
+	m_arg["Robin"] = 20
 
 }
 
 func main(){
 	m_obj := make(map[string]int)
-	m_obj["dodo"] = 18
+	m_obj["Robin"] = 18
 	fmt.Println(m_obj)
 	test_map(m_obj)
 	fmt.Println(m_obj)
@@ -1288,14 +1334,47 @@ func main(){
 }
 
 // output
-map[dodo:18]
-func edit m: m["dodo"] = 20 
-map[dodo:20]
+map[Robin:18]
+func edit m: m["Robin"] = 20 
+map[Robin:20]
 
 
 ```
 
-makemap 和 makeslice 的区别，带来一个不同点：当 map 和 slice 作为函数参数时，在函数参数内部对 map 的操作会影响 map 自身；而对 slice 却不会（之前讲 slice 的文章里有讲过）。
+makemap 和 makeslice 的区别，带来一个不同点：当 map 和 slice 作为函数参数时，在函数参数内部对 map 的操作会影响 map 自身；而对 slice 却不会。因为map是一个`(*hmap)类型数据。
+
+```go
+func main() {
+	s := []int{1,2,3,4,5}
+	testM := make(map[int]int)
+	for i:=0;i<5;i++{
+		testM[i]=i
+	}
+	testSlice(s)
+	fmt.Println("source slice: ", s)
+	testMap(testM)
+	fmt.Println("source map: ", testM)
+}
+
+func testSlice(s1 []int){
+    // 必须使用append()使slice执行的底层数组扩容。
+	s1 = append(s1, 99)
+	s1 = append(s1, 99)
+	fmt.Println("slice in func:", s1)
+}
+
+func testMap(m1 map[int]int)  {
+	m1[len(m1)]=len(m1)
+	m1[len(m1)]=len(m1)
+	fmt.Println(m1)
+}
+//output
+slice in func: [1 2 3 4 5 99 99]
+source slice:  [1 2 3 4 5]
+map[0:0 1:1 2:2 3:3 4:4 5:5 6:6]
+source map:  map[0:0 1:1 2:2 3:3 4:4 5:5 6:6]
+
+```
 
 主要原因：一个是指针（`*hmap`），一个是结构体（`slice`）。Go 语言中的函数传参都是值传递，在函数内部，参数会被 copy 到本地。`*hmap`指针 copy 完之后，仍然指向同一个 map，因此函数内部对 map 的操作会影响实参。而 slice 被 copy 后，会成为一个新的 slice，对它进行的操作不会影响到实参
 
@@ -1311,11 +1390,29 @@ To create an empty map, use the builtin `make`:`make(map[key-type]val-type)`.
 
 https://www.linkinstar.wiki/2019/06/03/golang/source-code/graphic-golang-map/
 
+end
+
+##### map get
+
+Go 语言中读取 map 有两种语法：带 comma(逗号--) 和 不带 comma。当要查询的 key 不在 map 里，带 comma 的用法会返回一个 bool 型变量提示 key 是否在 map 中；而不带 comma 的语句则会返回一个 value 类型的零值。如果 value 是 int 型就会返回 0，如果 value 是 string 类型，就会返回空字符串。
+
 ```go
-package main
+value := m["name"]
+fmt.Printf("value:%s", value)
 
-import "fmt"
+value, ok := m["name"]
+  if ok {
+    fmt.Printf("value:%s", value)
+  }
+```
 
+两种语法对应到底层两个不同的函数，那么在底层是如何定位到key的呢？稍后我们对函数进行源码分析。
+
+```go
+func mapaccess1(t *maptype, h *hmap, key unsafe.Pointer) unsafe.Pointer
+func mapaccess2(t *maptype, h *hmap, key unsafe.Pointer) (unsafe.Pointer, bool)
+
+// demo
 func main() {
 
     m := make(map[string]int)
@@ -1339,8 +1436,7 @@ func main() {
     n := map[string]int{"foo": 1, "bar": 2}
     fmt.Println("map:", n)
 }
-// output
-$ go run maps.go 
+// output 
 map: map[k1:7 k2:13]
 v1:  7
 len: 2
@@ -1349,40 +1445,78 @@ prs: false
 map: map[bar:2 foo:1]
 ```
 
-end
-
-##### map get
-
-Go 语言中读取 map 有两种语法：带 comma(逗号--) 和 不带 comma。当要查询的 key 不在 map 里，带 comma 的用法会返回一个 bool 型变量提示 key 是否在 map 中；而不带 comma 的语句则会返回一个 value 类型的零值。如果 value 是 int 型就会返回 0，如果 value 是 string 类型，就会返回空字符串。
-
-```go
-value := m["name"]
-fmt.Printf("value:%s", value)
-
-value, ok := m["name"]
-  if ok {
-    fmt.Printf("value:%s", value)
-  }
-```
-
-两种语法对应到底层两个不同的函数，那么在底层是如何定位到key的呢？稍后我们对函数进行源码分析。
-
-```go
-func mapaccess1(t *maptype, h *hmap, key unsafe.Pointer) unsafe.Pointer
-func mapaccess2(t *maptype, h *hmap, key unsafe.Pointer) (unsafe.Pointer, bool)
-```
-
-**key的定位：**
+##### key的定位
 
 key 经过哈希计算后得到哈希值，共 64 个 bit 位（64位机，32位机就不讨论了，现在主流都是64位机），计算它到底要落在哪个桶时，只会用到最后 B 个 bit 位。还记得前面提到过的 B 吗？如果 B = 5，那么桶的数量，也就是 buckets 数组的长度是 2^5 = 32。例如，现在有一个 key 经过哈希函数计算后，得到的哈希结果是：
-
-
 
 用最后的 5 个 bit 位，也就是 `01010`，值为 10，也就是 10 号桶。这个操作实际上就是取余操作，但是取余开销太大，所以代码实现上用的位操作代替。
 
 如何定位key:
 
 https://segmentfault.com/a/1190000022118894
+
+##### map[string]interface{}
+
+map的key肯定是固定不可变的，但是有时map的value是不确定的。
+
+```go
+func main() {
+
+
+	m := make(map[string]interface{})
+	//data := make([]map[string]string,1)
+	var data []map[string]string
+	item := make(map[string]string)
+	item["age"] = "20"
+	item["gender"] = "female"
+	data = append(data, item)
+	m["name"] = "Robin"
+	m["data"] = data
+	fmt.Printf("%v\n", m)
+
+	res, _ := json.Marshal(m)
+	fmt.Printf("%s\n", res)
+}
+
+// output
+map[data:[map[age:20 gender:female]] name:Robin]
+{"data":[{"age":"20","gender":"female"}],"name":"Robin"}
+
+// 小疑惑，data := make([]map[string]string,1)声明时
+2 // len(data)输出为2 --
+map[data:[map[] map[age:20 gender:female]] name:Robin]
+{"data":[null,{"age":"20","gender":"female"}],"name":"Robin"}
+```
+
+end
+
+##### map应用demo
+
+要求：将N个字符串平均分成三份或者引申将100个主机分散到三个云平台可用区。
+
+```go
+func main(){
+	s2 := []string{"test", "foo", "dodo", "sunny", "sum", "Robin"}
+	res := make(map[string]int)
+
+	for i:=0;i<len(s2);i++{
+		res[s2[i]]=i%3
+	}
+
+	fmt.Println(res)
+	for k,v:=range res{
+		if v == 0{
+			fmt.Println(k)
+		}
+	}
+}
+// output
+map[Robin:2 dodo:2 foo:1 sum:1 sunny:0 test:0]
+sunny
+test
+```
+
+
 
 #### Sync.map
 
@@ -2489,12 +2623,28 @@ type rune = int32
 
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/golang-type-alias-and-newtype.jpg)
 
-#### struct
+#### struct：值类型
+
+一个自定义的数据类型，就是一个结构体（等同于自定义int、string、float等数据类型）；创建、引用对象和值类型的基本数据类型一致。
+
+```go
+// 值类型
+type Test struct{
+    Name string
+}
+test := Test{"name":"Robin",}
+
+//引用类型，底层是(*hmap)
+mapTest := make(map[string]string)
+mapTest["Name"]="Robin"
+```
+
+
 
 声明定义结构体，要注意：
 
 * 首字母大写是公有的，首字母小写是私有的
-* end
+* 可以结合json tag实现不同序列化需求
 
 ```go
 package utils
@@ -2535,7 +2685,17 @@ func main()  {
 
 ```
 
-end
+struct的属性是否被导出，也遵循大小写的原则：首字母大写的被导出，首字母小写的不被导出。
+
+1. **如果struct名称首字母是小写的，这个struct不会被导出。连同它里面的字段也不会导出，即使有首字母大写的字段名**。
+2. **如果struct名称首字母大写，则struct会被导出，但只会导出它内部首字母大写的字段，那些小写首字母的字段不会被导出**。
+
+也就是说，struct的导出情况是混合的。
+
+但并非绝对如此，**如果struct嵌套了，那么即使被嵌套在内部的struct名称首字母小写，也能访问到它里面首字母大写的字段**。
+
+
+
 
 #### interface
 
@@ -2573,6 +2733,161 @@ func main()  {
 }
 // output
 0
+```
+
+end
+
+### Json序列化
+
+#### Struct序列化
+
+结构体的字段除了名字和类型外，还可以有一个可选的标签（tag）：它是一个附属于字段的字符串，可以是文档或其他的重要标记。比如在我们解析 json 或生成 json 文件时，常用到 encoding/json 包，它提供一些默认标签，例如：omitempty 标签可以在序列化的时候忽略 0 值或者空值；而 “-” 标签的作用是不进行序列化，其效果和直接将结构体中的字段写成小写的效果一样。
+
+```go
+type Info struct {
+    Name string
+    Age  int   `json:"age,string"`     //这样生成的json对象中，age就为字符串
+    Gender  string  `json:"gender,omitempty"`  // 可以忽略Gender的空值
+    Test string `json:"-"`  // 序列化时忽略这个字段
+    test string `json:test`
+}
+
+// demo
+type Info struct {
+	Name  string `json:"name"`
+	Age string `json:"age,int"`
+	Gender string `json:"gender,omitempty"`
+	Test string `json:"-"`
+	test string `json:"test"`
+}
+
+func main() {
+
+	infoTest := Info{
+		Name: "Robin",
+		Age: "18",
+		Gender: "Man",
+		Test: "TT",
+		test: "tt",
+	}
+	res, err := json.Marshal(infoTest)
+	if err != nil{
+		panic("marshal error")
+	}
+	fmt.Printf("Marshar string: %s\n", res)
+}
+// output
+Marshar string: {"name":"Robin","age":"18","gender":"Man"}
+```
+
+end
+
+#### map序列化
+
+```go
+func main() {
+
+	infoTest := Info{
+		Name: "Robin",
+		Age: "18",
+		Gender: "Man",
+		Test: "TT",
+		test: "tt",
+	}
+
+	m := make(map[string]string)
+	m["Game"] = "lol"
+	resM, err := json.Marshal(m)
+	if err != nil{
+		panic("marshal error")
+	}
+	fmt.Printf("Marshar string: %s\n", resM)
+
+	mapUnmarshal := make(map[string]string)
+
+	json.Unmarshal(res, &mapUnmarshal)
+	fmt.Printf("UnMarshar %v\n", mapUnmarshal)
+	for k,v := range mapUnmarshal{
+		fmt.Println(k, v)
+	}
+}
+// output
+Marshar string: {"Game":"lol"}
+UnMarshar map[age:18 gender:Man name:Robin]
+name Robin
+age 18
+gender Man
+```
+
+end
+
+#### map[string]interface{}
+
+对于value类型不确定的数据使用`interface{}`作为value
+
+```go
+// 元数据
+{
+    "device": "1",
+    "data": [
+        {
+            "humidity": "27",
+            "time": "2017-07-03 15:23:12"
+        }
+    ]
+}
+
+
+func main() {
+	// marshal string
+	json_str := "{\"device\": \"1\",\"data\": [{\"humidity\": \"27\",\"time\": \"2017-07-03 15:23:12\"}]}"
+
+	m := make(map[string]interface{})
+	mTest := make(map[string]map[string]string)
+
+	json.Unmarshal([]byte(json_str), &m)
+	fmt.Printf("%v\n", m)
+
+    // Error: one value is string, another is map type
+	json.Unmarshal([]byte(json_str), &mTest)
+	fmt.Printf("%v\n", mTest)
+}
+
+// output
+map[data:[map[humidity:27 time:2017-07-03 15:23:12]] device:1]
+map[data:map[] device:map[]]
+
+```
+
+end
+
+#### slice 序列化
+
+```go
+func testSlice() {
+	//定义一个slice，元素是map
+	var m map[string]interface{}
+	var s []map[string]interface{}
+	m = make(map[string]interface{})
+	m["username"] = "user1"
+	m["age"] = 18
+	m["sex"] = "man"
+	s = append(s, m)
+	m = make(map[string]interface{})
+	m["username"]="user2"
+	m["age"]=188
+	m["sex"]="male"
+	s=append(s,m)
+	data, err := json.Marshal(s)
+	if err != nil {
+		fmt.Printf("json.marshal failed,err:", err)
+		return
+	}
+	fmt.Printf("%s\n", string(data))
+
+}
+// output
+[{"age":18,"sex":"man","username":"user1"},{"age":188,"sex":"male","username":"user2"}]
 ```
 
 
@@ -2884,3 +3199,8 @@ end
 4. https://cloud.tencent.com/developer/article/1766867
 5. https://juejin.cn/post/7053450610386468894
 6. https://oldpan.me/archives/linux-a-so-o-tell
+7. https://segmentfault.com/a/1190000023879178
+8. https://juejin.cn/post/6844904177022271501
+9. https://www.imooc.com/article/261217
+10. https://learnku.com/docs/bettercoding/1.0/structure-label/6968#52a4a5
+11. https://cloud.tencent.com/developer/article/1200349
