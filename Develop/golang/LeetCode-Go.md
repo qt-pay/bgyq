@@ -6,31 +6,6 @@
 
 ### 堆
 
-https://driverzhang.github.io/post/go%E6%A0%87%E5%87%86%E5%BA%93%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84%E7%B3%BB%E5%88%97%E4%B9%8B%E5%A0%86heap/
-
-#### 完全二叉树
-
-堆是一个完全二叉树。若设二叉树的深度为h，除第 h 层外，其它各层 (1～h-1) 的结点数都达到最大个数，第 h 层所有的结点都连续集中在最左边，这就是完全二叉树。
-
-完全二叉树可以用一个数组表示，不需要指针，所以效率更高。当用数组表示时，数组中任一位置i上的元素，其左儿子在位置2i上，右儿子在位置(2i+ 1)上，其父节点在位置(i/2)上。
-
-
-
-#### 建堆
-
-建堆，就是在原切片上操作，形成堆结构。
-只要按照顺序，把切片下标为n/2到1的节点依次堆化，最后就会把整个切片堆化。
-
-堆中每一个节点的值都必须大于等于（或小于等于）其子树中每个节点的值。
-
-![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/heap-1.webp)
-
-1,2为 大顶堆
-
-3 小顶堆
-
-4 不是堆
-
 ### 树
 
 ### 图
@@ -100,6 +75,62 @@ func twoSum(nums []int, target int) []int {
 
 end
 
+#### 快速排序
+
+算法实现：
+
+1. 从数列中挑出一个元素,称为 “基准”(pivot)
+2. 重新排序数列,所有元素比基准值小的摆放在基准前面,所有元素比基准值大的摆在基准的后面(相同的数可以到任一边).在这个分区退出之后,该基准就处于数列的中间位置.这个称为分区(partition)操作;
+3. 递归地(recursive)把小于基准值元素的子数列和大于基准值元素的子数列排序;
+
+递归的最底部情形,是数列的大小是零或一,也就是永远都已经被排序好了. 虽然一直递归下去,但是这个算法总会退出,因为在每次的迭代(iteration)中,它至少会把一个元素摆到它最后的位置去.
+
+```go
+func partition(list []int, low, high int) int {
+	pivot := list[low] //导致 low 位置值为空
+	for low < high {
+		//high指针值 >= pivot high指针👈移
+		for low < high && pivot <= list[high] {
+			high--
+		}
+		//填补low位置空值
+		//high指针值 < pivot high值 移到low位置
+		//high 位置值空
+		list[low] = list[high]
+		//low指针值 <= pivot low指针👉移
+		for low < high && pivot >= list[low] {
+			low++
+		}
+		//填补high位置空值
+		//low指针值 > pivot low值 移到high位置
+		//low位置值空
+		list[high] = list[low]
+	}
+	//pivot 填补 low位置的空值
+	list[low] = pivot
+	return low
+}
+
+func QuickSort(list []int,low,high int)  {
+	if high > low{
+		//位置划分
+		pivot := partition(list,low,high)
+		//左边部分排序
+		QuickSort(list,low,pivot-1)
+		//右边排序
+		QuickSort(list,pivot+1,high)
+	}
+}
+
+func TestQuickSort(t *testing.T) {
+	list := []int{2,44,4,8,33,1,22,-11,6,34,55,54,9}
+	QuickSort(list,0,len(list)-1)
+	t.Log(list)
+}
+```
+
+
+
 ### 引用
 
-1. https://gopherzhang-1992.gitbook.io/golang-server-side/shu-ju-jie-gou-yu-suan-fa/dui-heap
+1. https://mojotv.cn/algorithm/golang-quick-sort
