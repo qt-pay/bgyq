@@ -107,11 +107,11 @@ eg：堆数组N长度为5，则第三个元素一定是叶子节点。
 
 完全二叉树可以用一个数组表示，不需要指针，所以效率更高。
 
-一个N给节点的堆，一定有`N/2`个根节点。
+一个N给节点的堆，一定有`N/2`个根节点。（14或15除以2，商都是7）
 
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/heap-in-array.png)
 
-#### 定义heap
+#### 自定义heap
 
 ```go
 package main
@@ -126,8 +126,6 @@ type heap struct {
 func main() {
 	m := []int{1, 9, 3, 2, 7, 66,27,8,6,5} //第0个下标不放目标元素
 	h := buildHeap(m)               //建堆，返回一个heap结构
-	//h.Push(50)
-	//h.Pop()
 	fmt.Println(h.m)
 }
 
@@ -269,6 +267,20 @@ type Interface interface {
 
 #### heap.Init
 
+```go
+// Note that Push and Pop in this interface are for package heap's
+// implementation to call. To add and remove things from the heap,
+// use heap.Push and heap.Pop.
+type Interface interface {
+	sort.Interface
+	Push(x interface{}) // add x as element Len()
+	Pop() interface{}   // remove and return element Len() - 1.
+}
+
+```
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/golang-heap-package-interface.png)
+
 Let’s first look at the `heap.Init` function.
 
 ```go
@@ -327,6 +339,7 @@ Let’s see again how `heap.Push` guarantees that the sequential array remains a
 // O(log(n)) where n = h.Len().
 func Push(h Interface, x interface{}) {
     h.Push(x)
+    // 先push，然后再上浮，这里减一是得到插入前的array/queue长度
     up(h, h.Len()-1)
 }
 ```
@@ -352,7 +365,13 @@ If element j is smaller than parent i, the two nodes are swapped and the compari
 
 In this way, it is ensured that the sequential array in which the new elements are inserted remains a minimal heap after up.
 
+很简单，依此查找元素 j 的父节点（i），如果元素 j 比父节点 i 要小，则交换这两个节点，并继续向再上一级的父节点比较，直到根节点，或者元素 j 大于 父节点 i。
+
+如此，可以保证插入新元素的顺序数组在up之后，仍然是一个最小堆。
+
 #### heap.Pop
+
+heap.Pop的目的就是将根节点（0）与末尾节点的元素交换，并将新的根节点的元素down（下沉）到合适的位置，满足最小/最大堆的要求。
 
 ```go
 // Pop removes the minimum element (according to Less) from the heap
@@ -479,6 +498,7 @@ func (pq *PriorityQueue) Push(x interface{}) {
     *pq = append(*pq, item)
 }
 
+// 将index置为-1是为了标识该数据已经出了优先级队列了
 func (pq *PriorityQueue) Pop() interface{} {
     old := *pq
     n := len(old)
