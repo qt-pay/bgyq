@@ -358,6 +358,8 @@ IP-ip-IP相当于起的Tunnel，完成两个calico-node（bird）的直连，因
 
 IPIP kind of tunnels is the simplest one. It has the lowest overhead, but can incapsulate only IPv4 unicast traffic, so you will not be able to setup OSPF, RIP or any other multicast-based protocol.
 
+> IPIP性能比VxLAN好，但是安全性比VxLAN差。
+
 IPIP支撑OSPF、RIP和其他的多播协议。
 
 Tunneling is a way to transform data frames to allow them pass networks with incompatible address spaces or even incompatible protocols. There are different kinds of tunnels: some process only IPv4 packets and some can carry any type of frame. Linux kernel supports 3 tunnel types: IPIP (IPv4 in IPv4), GRE (IPv4/IPv6 over IPv4) and SIT (IPv6 over IPv4). Tunnels are managed with ip program, part of Iproute2:
@@ -469,9 +471,7 @@ Link Local地址也被称为：链路本地地址（link local address），是�
 
 2、calcio workload 的各节点机的 eth0 网卡的 IP 段和 calcio 的网段必须不同，可通过修改 calcio 网段解决。
 
-### CALICO_NETWORKING_BACKEND
 
-The networking backend to use. In `bird` mode, Calico will provide BGP networking using the BIRD BGP daemon; VXLAN networking can also be used. In `vxlan` mode, only VXLAN networking is provided; BIRD and BGP are disabled. If set to `none` (also known as policy-only mode), both BIRD and VXLAN are disabled. [Default: `bird`]
 
 ### calico Plugins
 
@@ -677,7 +677,39 @@ calicoctl也是从etcd中读取系统的状态信息，指令是通过改写etcd
 
 
 
+### CALICO VxLAN mode
 
+The networking backend to use. In `bird` mode, Calico will provide BGP networking using the BIRD BGP daemon; VXLAN networking can also be used. In `vxlan` mode, only VXLAN networking is provided; BIRD and BGP are disabled. If set to `none` (also known as policy-only mode), both BIRD and VXLAN are disabled. [Default: `bird`]
+
+Calico也是支持Overlay网络的
+
+```yaml
+            - name: CALICO_IPV4POOL_VXLAN
+              value: "CrossSubnet"
+
+            - name: CALICO_IPV4POOL_VXLAN
+              value: "vxlan"
+
+# 修改 CIDP 保持和 kubeconfig 默认的一致
+            - name: CALICO_IPV4POOL_CIDR
+              value: "10.244.0.0/16"
+
+```
+
+calico vxlan 模式并未通过 BGP 来进行维护，这一点和 IPIP 有着本质的区别。
+
+```bash
+$ calicoctl node status
+Calico process is running.
+
+The BGP backend process (BIRD) is not running.
+```
+
+
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/calico-vxlan-mode.png)
+
+end
 
 ### Calico IPIP Mode：666
 
@@ -714,7 +746,7 @@ listening on eth0, link-type EN10MB (Ethernet), capture size 262144 bytes
 16:41:08.884128 IP 10.39.0.110 > 10.39.3.75: IP 192.168.70.42 > 192.168.169.196: ICMP echo request, id 20142, seq 14, le
 ```
 
-Host（bird agent）如果可以直连，那么通过bgp peer可以交换路由信息，但是如果两个host中间隔了N个Router，导致Host无法直连交换路由信息，就无法实现pod跨node通讯。emmm，甚至 Bird 和 Router都无法建立bgp peer。所以，出现了IPIP mode，将三层可达的Host 变成可以直达（Next-hop）的host
+Host（bird agent）如果可以直连，那么通过bgp peer可以交换路由信息，但是如果两个host中间隔了N个Router，导致Host无法直连交换路由信息，就无法实现pod跨node通讯。emmm，甚至 Bird 和 Router都无法建立bgp peer。所以，**出现了IPIP mode，将三层可达的Host 变成可以直达（Next-hop）的host**
 
 Calico 将node作为Router实现路由交换(BGP)
 
@@ -735,7 +767,28 @@ end
 
 从路由表中发现到192.168.169.196的路由是通过网关`10.39.0.1`送出。
 
-calico没有网关进行路由交换，网关10.39.0.1并不知道192.168.169.192的存在。\
+calico没有网关进行路由交换，网关10.39.0.1并不知道192.168.169.192的存在。
+
+#### ipipmode配置
+
+`Calico overlay` 模式，一般也称Calico IPIP或VXLAN模式，不同Node间Pod使用IPIP或VXLAN隧道进行通信。`Calico underlay` 模式，一般也称calico BGP模式，不同Node Pod使用直接路由进行通信。在overlay和underlay都有`nodetonode mesh`(全网互联)和`Route Reflector`(路由反射器)。
+
+在Calico Overlay网络中有两种模式可选（仅支持IPV4地址）
+
+- IP-in-IP （使用BGP实现）
+- Vxlan （不使用BGP实现）
+
+两种模式均支持如下参数
+
+- Always: 永远进行 IPIP 封装(默认)
+- CrossSubnet: 只在跨网段时才进行 IPIP 封装，适合有 Kubernetes 节点在其他网段的情况，属于中肯友好方案
+- Never: 从不进行 IPIP 封装，适合确认所有 Kubernetes 节点都在同一个网段下的情况（配置此参数就开启了BGP模式）
+
+在默认情况下，默认的 ipPool 启用了 IPIP 封装(至少通过官方安装文档安装的 Calico 是这样)，并且封装模式为 `Always`；这也就意味着任何时候都会在原报文上封装新 IP 地址。
+
+calico有BGP模式和IPIP模式但是并不是说IPIP模式就不用建立BGP连接了，IPIP模式也是需要建立BGP连接的(可以通过抓取179端口的报文验证)，只不过建立BGP链接的目标是对端的tunl0对应的网卡。
+
+
 
 #### 实际分析：有个问题
 
@@ -840,9 +893,7 @@ It would look something like this:
                                 +-------+   +-------+
 
 
-The BGP session would be established between 10.65.0.4 (IP of host A on
-tunlA) and 10.65.0.5 (IP of host B on tunlB), so that the routes learnt
-via BGP would be immediately correct.
+The BGP session would be established between 10.65.0.4 (IP of host A on tunlA) and 10.65.0.5 (IP of host B on tunlB), so that the routes learnt via BGP would be immediately correct.
 
 Basically, it's a simple overlay network.
 
@@ -2009,3 +2060,4 @@ Destination     Gateway         Genmask         Flags Metric Ref    Use Iface
 6. https://tech.ipalfish.com/blog/2020/03/06/kubernetes_container_network/
 7. https://mp.weixin.qq.com/s/tk_Zlt_zVAOX9IhDuGkYFA
 8. https://blog.51cto.com/zhangxueliang/3223396
+9. https://blog.51cto.com/liujingyu/5307376
