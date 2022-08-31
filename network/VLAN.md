@@ -26,6 +26,20 @@ VLANs use software to emulate separate physical LANs. Each VLAN is thus a separa
 
 3. 交换机如果互联用access模式，不同vlan配置同网段ip是能通讯的，因为Access 模式发送数据包时会去除tag标签。
 
+#### vlan二层隔离唯一方法
+
+802.1Q Ethernet frame通过VLAN identifier实现基于以太网的数据链路层二层隔离。
+
+划分 VLAN 后，不同VLAN 之间不能直接通信。
+
+同一网段，不同VLAN为何无法通讯？
+
+因为交换机Access口只能接受没有vlan tag或者vlan tag和PVID相同的帧。
+
+类似两个主机接到两个单独的交换机上。如果两个交换机不做连线配置根本无法通讯。
+
+
+
 #### vlan and ovs and vm
 
 vlan是交换机上的元数据，云平台下发虚拟机时给vm指定vlan就是给vm指定网络了。
