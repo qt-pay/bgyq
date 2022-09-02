@@ -1,8 +1,75 @@
-### VxLAN 应用： Openstack
+## VxLAN 应用： Openstack
 
 Openstack的租户网络使用VxLAN，可以提供1600w，满足各种需求，主机层面仍使用vlan即可，因为一个host上不可能跑4000个虚拟机。
 
-####  VNI 和 VID 转换: vxlan的意义
+### 实现不同租户隔离的是vlan或vxlan
+
+不同的虚拟网络是以vlan/vxlan id区分的，而不是3层的网络cidr。
+
+不同租户可以创建相同的网络，网络隔离本质上还是ovs流表做的。
+
+#### VLAN多租户
+
+VLAN创建Network时，要手动指定VLAN tag。
+
+VLAN模型引入了多租户机制，虚拟机可以使用不同的私有IP网段，一个租户可以拥有多个IP网段。虚拟机IP通过DHCP消息获取IP地址（Nova-network实现为nova-network主机中的dnsmaq，Neutron实现为网络节点上的dhcp-agent）。网段内部虚拟机间的通信直接通过HyperVisor中的网桥转发，同一租户跨网段通信通过网关路由，不同租户通过网关上的ACL进行隔离，公网流量在该网段的网关上进行NAT（Nova-network实现为开启nova-network主机内核的iptables，Neutron实现为网络节点上的l3-agent）**。如果不同租户逻辑上共用一个网关，则无法实现租户间IP地址的复用。**
+
+#### VxLAN多租户
+
+VxLAN创建Network时，从Neutron配置vxlan区间中，自动递增。
+
+Overlay模型（包括GRE和VxlAN隧道技术），相比于VLAN模型有以下改进。
+
+1）租户数量从4K增加到16million；
+
+2）租户内部通信可以跨越任意IP网络，支持虚拟机任意迁移；
+
+3）一般来说每个租户逻辑上都有一个网关实例，IP地址可以在租户间进行复用；
+
+4）能够结合SDN技术对流量进行优化。
+
+### VLAN on Openstack
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/openstack-vlan-demo.jpg)
+
+
+
+vlan模式虚拟机通信需要经过的所有端口，数据流向如下：
+
+- 数据帧从VM出来，经过TAP提供的虚拟网口vNIC，再经过Linux网桥qrb安全验证，走到qvm，会打上一个内部的VLANtag，成为主机节点内部的local id。这个id的作用是区分同一个主机内部的不同VM;
+
+- 继续南下到ply，资料显示作用是过滤掉非本机的MAC，主要作用是为了方便访问同一个主机的其他VM，如果目的源是同一台主机则直接访问，不用br-int转发;
+
+- 继续走到br-int会实现转发到目的帧主机，南下到patch port（一对patch-port连接br-int和br-eth），br-eth会把帧中间的之前打的内部VLAN ID即local id删除，换成外部的VLAN ID;
+
+  eg：设置 br-eth1 中的 flow rules。从 patch port 进入的数据帧，将内部 VLAN ID 1 修改为 101，内部 VLAN ID 2 修改为 102，再从 eth1 端口发出。对从 eth1 进入的数据帧做相反的处理。
+
+- 之后帧走到实际的外部物理交换机网口，发送到目的地
+
+  物理交换机与eth网卡相连的 port 设置成 trunk 模式，实现同一块物理网卡上面通过多个不同vlan 的数据。
+
+#### vlan tag 转换
+
+vlan转换是因为br-int上的vlan tag是做宿主机内部不同租户网络隔离用的，这个Tag只在这个宿主机内部有效。
+
+Tenant在创建private network时，需要分配一个vlanid，此vlanid是全局的。
+
+举个例子，Tenant 在A主机上的打的标签是tag1，在B主机上打的标签是tag2， tag1在访问B上的虚拟机时，需要将tag1转换成tag2. 这个转换需要用到全局vlanid
+
+A主机上，数据帧从br-int经过br-eth1然后通过网口发出， tag1->vlanid1   B主机接收到vlanid1的数据帧，转换为tag2发送到br-int上， vlanid1->tag2 ， 完成转换。A主机上标签为TAG1的VM，能够与B主机上标签为TAG2的VM通信。
+
+
+如果是GRE模式，也有这个标识网络的全局ID，segmentID
+
+#### 带vlan tag的流量
+
+默认br-int 只能接收虚机发出的网络包没有加 vlan tag，也就是 untagged。
+
+在某些场景中，虚机发出的包需要有 vlan tag。 Neutron 的 BP https://blueprints.launchpad.net/neutron/+spec/vlan-aware-vms 实现了一种方案，而且代码已经合并。『This blueprint proposes how to incorporate VLAN aware VM:s into OpenStack. In this document a VLAN aware VM is a VM that sends and receives VLAN tagged frames over its vNIC.』
+
+### VxLAN on Openstack
+
+####  VNI 和 VID 转换意义: vlan类似
 
 在openstack中，尽管br-tun上的vni数量增多，但br-int上的网络类型只能是vlan，所有vm都有一个内外vid（vni）转换的过程，将用户层的vni转换为本地层的vid。
 尽管br-tun上vni的数量为16777216个，但br-int上vid只有4096个，那引入vxlan是否有意义？
@@ -201,3 +268,8 @@ For example, virtual network traffic between ToR and core switches could be enca
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/openstack-vxlan-bind-vlan.png)
 
 Dynamically allocating segments at lower levels of the hierarchy is particularly important in allowing Neutron deployments to scale beyond the 4K limit per physical network for VLANs. VLAN allocations can be managed at lower levels of the hierarchy, allowing many more than 4K virtual networks to exist and be accessible to compute nodes as VLANs, as long as each link from ToR switch to compute node needs no more than 4K VLANs simultaneously
+
+### 引用
+
+1. https://www.codeleading.com/article/28243150268/
+2. https://www.cnblogs.com/sammyliu/p/4626419.html

@@ -597,7 +597,7 @@ M-LAG与堆叠的区别
 
 总的来说，堆叠具有配置、设计相对简单的优点，但灵活度、可靠性、升级复杂程度均不如M-LAG；M-LAG相比于堆叠虽然配置复杂度较高，但其控制面解耦、组网灵活度高的特点使其可靠性更强。
 
-#### 冗余 and 堆叠应用：mark
+##### 冗余 and 堆叠应用：mark
 
 IRF是Intelligent Resilient Framework的简称，即智能弹性架构，是H3C公司专有的设备虚拟化技术，将实际物理设备虚拟化为逻辑设备供用户使用。
 
@@ -632,6 +632,10 @@ DRNI（Distributed Resilient Network Interconnect，分布式弹性网络互连�
 3. 独立升级：两台设备可以分别进行升级，保证有一台设备正常工作即可，对正在运行的业务几乎没有影响。
 
 DRNI主要应用于双归接入组网，将可靠性从链路级提高到设备级。
+
+##### DRNI diff IRF
+
+DRNI是跨设备链路聚合，针对没法堆叠的设备，是一种上下的关系，IRF针对的是同型号的并行关系。
 
 ##### DRNI 应用
 
@@ -676,6 +680,17 @@ EVPN采用DRNI技术将虚拟出的设备作为VTEP，**简化了VTEP的配置�
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/DRNI-5.png)
 
 
+
+#### RBM：双机热备
+
+RBM（Remote Backup Management，远端备份管理）协议，不仅可以备份设备间的配置信息和业务表项，还能联动VRRP和动态路由等，统一管理流量的切换保证用户业务数据的不间断传输。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/RBM双机热备.jpg)
+
+ 配置双机热备监控功能，保证Device上下行接口状态统一切换。以下双机热备监控功能仅能二选其一。
+
+* 配置双机热备监控VLAN状态：此种方式下只需要将Device配置为双机热备主备工作模式即可，Device的上下行二层交换机无需开启生成树协议，双机热备可以保证无环路。
+* 配置双机热备监控上下行接口状态：此种方式下Device的上下行二层交换机上必须开启生成树协议保证无环路。
 
 
 

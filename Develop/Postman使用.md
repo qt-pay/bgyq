@@ -1,4 +1,4 @@
-### Postman使用
+## Postman使用
 
 ### k-v格式
 
@@ -28,3 +28,18 @@ curl 'http://100.5.15.111:9091/api/v1/cluster/deployment?t=1629286947976' \
 我瞬间明白了，Postman只支持`key=value`形式的... 这样`--Parameter`不支持，所以报错。
 
 去掉结尾的`--compressed and --insecure`即可。
+
+### newman
+
+　　Newman 是 Postman 推出的一个 nodejs 库，直接来说就是 Postman 的json文件可以在命令行执行的插件。
+　　Newman 可以方便地运行和测试集合，并用之构造接口自动化测试和持续集成。
+
+```bash
+$ newman run --reporters cli,json  -e execute-environment.json --insecure --timeout-request 30000 --reporter-json-export execute-result.json  execute-collections.json > execute-log.log
+
+
+```
+
+作用：
+
+前端页面将测试用例写入到json文件中，后端调用newman
