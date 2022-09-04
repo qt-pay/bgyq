@@ -150,6 +150,8 @@ tcp是可靠的，over tcp后还是可靠的； 如果是 over udp也是可靠�
 
 ### VPC中共享服务
 
+VRF标识一个VPC？
+
 在数据中心，一些服务需要为多个租户提供服务，例如DNS和DHCP，这些服务通常部署在共享的VRF中，所有的租户的VRF都可以访问这个VRF，通常由两种实现方式，路由泄露和下游VNI分配。
 
 #### 路由泄漏
@@ -200,6 +202,8 @@ route-target import 65501:50001 evpn
 原文链接：https://blog.csdn.net/qq_43691045/article/details/103598254
 
 ### 什么是VPC
+
+VPC是承载所有其他网络产品的基础。在云上所有用户的建立的产品都在VPC基础之上。
 
 VPC实际上就是SDN在公有云的应用。软件可控，Overlay使得服务商的硬件利用率提高，对硬件厂商的依赖程度降低。在这个基础上，公有云服务商还能够提供更好的网络服务。
 
@@ -353,7 +357,120 @@ A NAT Gateway does something similar, but with two main differences:
 1. It allows resources in a private subnet to access the internet (think yum updates, external database connections, wget calls, etc), and
 2. it only works one way. The internet at large cannot get through your NAT to your private resources unless you explicitly allow it.
 
-### VPC 多租户
+### FRR：实现不同协议路由转换
+
+FRR is free software that implements and manages various IPv4 and IPv6 routing protocols. It runs on nearly all distributions of Linux and BSD and supports all modern CPU architectures.
+
+
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/frr-on-vpc.jpg)
+
+### VPC 架构实现分析: ovn/ovs/vxlan:star2:
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vpc-架构模型-demo.jpg)
+
+* L3 VNI : 创建vpc时会分配一个L3 VNI，整个VPC共享一个L3 VNI
+
+* Router：创建VPC时会生产一个VPC内路由器，用于VPC不同Subnet（vSwitch）转发
+
+* GWSwitch：创建VPC时生产一个Gateway Switch，用于整个vpc网络如何和网络设备(网络Overlay)Border通讯。
+
+  Router默认路由的下一跳指向的是GWSwitch的IP，通过解析GWSwitch IP的mac地址，将数据包送到Border
+
+* L2 VNI：vpc下每创建一个子网，就会生成一个L2 VNI
+
+* LSP：Logical Switch Port，每新建一个vm都会在vSwitch上创建一个lsp，接入vm nic并分配IP
+
+#### 流量demo
+
+一个VPC中组件结构：
+
+* Router : 一个L3 VxLAN
+* Switch_1：一个L2 VxLAN，用户界面是一个子网
+* Switch_2：一个L2 VxLAN，用户界面是一个子网
+
+每个Switch上有全部vms的信息，但是当真正数据转发时，Switch 通过查询port_binding表确定Switch port(vm)具体在 哪个节点上即包的源数据信息。然后在读取相应的Tunnel类型节点，决定最终的Tunnel类型是NVGRE还是VxLAN。
+
+> 当宿主机上有一个网段下一个vm时，才会在宿主机上创建该网段对应的vswitch，并知道整个网段的vm路由
+
+因为，整体网络设计是主机间用NVGRE协议，主机和其他网络设备间是VxLAN协议。
+
+拓扑信息：
+
+* vm1 和 vm 3实例在CVK 1上
+* vm 2 和 vm 4实例在CVK2上
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vpc-混合overlay-流量模型.jpg)
+
+CVK 1 和 CVK 2 在VPC 1
+
+列举几种流量：
+
+* cvk 1 上 vm 1 访问 cvk 1 上 vm 3：vm 1和vm 3在不用的vSwitch（不同vni吧）上，需要借助VPC下Router转发流量，但是此时还是L2 VxLAN数据包
+
+  即cvk 1上的Router已经知道了去往vm3的下一跳了、
+
+* cvk 1 上 vm 1 访问 cvk 2 上vm2： vm 1和vm 2不在同一个宿主机上，但是在同一个Switch上（同一个vni），流量不经过Router，由两个Switch 所在的节点 cvk 1 和 cvk 2建立的Tunnel传输，下一跳就是vm所在cvk 节点IP，这也是L2 VxLAN数据包
+
+  PS：宿主机上只要有某个Switch下的一个vm，就会生产一个Switch，并知道整个Switch的路由信息。
+
+  即cvk 1上的Router已经知道了去往vm2的下一跳了、
+
+* cvk 1 上 vm 1 访问 cvk 2 上vm4：vm 1和vm 4不在同一个宿主机上，也不在同一个Switch上（不同vni），流量要经过Router转发，确定vm4所在Switch2的cvk节点，然后通过两个CVK建立的Tunnel传输L2 VxLAN数据包。
+
+  **PS: 三层转发已经在CVK 1上通过Router 1完成了，vm 1 和 vm 2通讯时，只需两个switch 建立二层VxLAN隧道即可。**
+
+  即cvk 1上的Router已经知道了去往vm4的下一跳了、
+
+* CVK 1上 vm 1 访问网络overlay下CVK N上的vm 5： vm 5 在 Switch 2上，由于CVK 1上有vm3，所以可以看到Switch 2上的全部路由信息。VM 1 访问 VM 5 的流量就是VM 1先到网关Switch 1 再到路由器 Router 1（因为跨vni，跨子网了），然后到达Switch 2，在Switch 2上查到VM的下一跳是网络Overlay物理Leaf设备，然后下一跳到达Leaf，Leaf对Overlay解封装(应该是VxLAN协议了)，将数据转发给VM5。因为没过GWSwitch还是L2 VxLAN信息。
+
+  PS：如果VM 5在不同的Switch(子网)就要走GWSwitch了。
+
+* CVK 1上VM访问 CVK 3上VM 6： VM 6 在Switch 3上，由于CVK 1上没有Switch 3，需要依靠明显路由的方式找到VM 6了。此时流量要经过GWSwitch即vm 1 --》Switch 1 --》 Router 1 --》 GWSwitch --》 Switch 6 --》 vm6，这时是L3 VxLAN信息。
+
+  即CVK 1上的Router不知道去往VM6的路由了，所以需要走网关去其他的宿主机Router通讯查询，这个网关就是GWSwitch。
+
+  仅当cvk 1上有某个子网下vm时，才会在cvk上生成一个vSwitch
+
+* end
+
+#### 流量模型总结
+
+宿主机只用于vm所在不同Subnet(vSwitch)的全量拓扑信息。
+
+所以，GWSwitch类似Default Route，负责将本地宿主机上一个未知Subnet，信息转发到其他宿主机上的vRouter，来实现两个vm间的通讯。
+
+二层流量转发：当宿主上通过vRouter和vSwitch可以定位到目标vm在哪个vSwitch时，两个宿主机直接使用NVGRE Overlay Tunnel开始流量传输，类似两个交换机互联。
+
+一个宿主机上可能有N个vSwitch因为宿主机上的vm可能属于不同的SubNetwork，如果通过宿主机上的vSwitch可以定位到目标端，则从宿主机出去的流量就是二层流量。
+
+
+
+三层流量转发：当宿主机上vRouter和vSwitch无法定位到目标vm所在的vSwitch时，则宿主机的流量要从GWSwitch出去，走三层路由的方式去实现通讯。
+
+类似，在宿主上的流量走默认路由出去了，此时是三层流量。
+
+
+
+#### Agent作用
+
+如下，FRR学习到路由信息，然后A-Agent转换成OVN可以识别的路由信息，调用OVN下发路由给vm。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/主机Overlay架构.jpg)
+
+当vm在不同宿主机上漂移重建时，必然会引起路由的变化，这就需要哟个Agent来维护路由信息的变化。
+
+eg：一个虚拟机vm从一个接在网络Overlay上的宿主机上，转移到一个主机Overlay宿主机上了。那么，VPC下Router的信息就要更新把之前指向vm的明细路由删掉，转换成执行某个vSwitch的路由。
+
+#### 流量模型有点不合理
+
+该流量模型设计的一个前提：当host上有一个vm时，会感知到该vm 所在subnet的全部拓扑信息。
+
+宿主机上的Router其实承担的作用时，给宿主机上不同Subnet Switch做路由转发，它叫Local Router是不是合适点、
+
+宿主机上的GWSwitch承担的是一个默认路由的角色，当Local Router无法查到vm的Subnet Switch时（即该host上没有目标vm所在Subnet的vm instance），流量走向GWSwitch，通过GWSwitch和其他宿主机上的Local Router通讯获取到vm的转发路由。这个GWSwitch是不是叫GWRouter合适点、
+
+### VPC 多租户：VRF
 
 作为 MP-BGP 的扩展，MP-BGP EVPN 继承了 VPN 通过 VRF 实现的对多租户的支持。
 
@@ -428,6 +545,35 @@ $ ip vrf forwarding vrf-name
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/VRF-pro.gif)
 
 
+
+### VPC 互通
+
+vpc直接的互通可能有很多种方式，这里介绍一种方式。
+
+核心思想：不同VPC下计算节点(承载vm)上添加一条指向VPC互联器（可能是一个新建vpc中的一组fw）的下一跳，将跨VPC的东西流量，引入到VPC连接器中处理。
+
+> 类似calico的169.254.1.1地址作为pod网关
+
+创建一个vpc连接器，vpc连接器会自动生产接入vpc连接器的vpc网段信息，并生成两个路由组。
+
+* 路由组_1: 配置有防火墙安全策略的路由组
+* 路由组_2: 仅互通没有安全策略的路由组
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vpc-互联-1.jpg)
+
+接入vpc连接器的vpc不需要做任何额外配置
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vpc-互联-2.jpg)
+
+需要互联的VPC 1 和 VPC 2自动添加一条引流路由，将要发往对端VPC的流量转到VPC连接器
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vpc-互联-3.jpg)
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vpc-互联-4.jpg)
+
+VPC连接器上的路由策略信息，完成vpc 1和vpc 2的互通。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vpc-互联-5.jpg)
 
 ### VPN and VPC
 

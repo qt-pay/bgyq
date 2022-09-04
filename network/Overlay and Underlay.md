@@ -92,6 +92,12 @@ Intel提出来SR-IOV这个东西。SR-IOV最初应用在网卡上。简单的说
 
 ##### Host Overlay
 
+这个SDN控制器的引流太6了。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/主机Overlay-6.jpg)
+
+
+
 主机Overlay指的是隧道封装在服务器的vSwitch上完成，不用增加新的网络设备即可完成Overlay部署，可以支持虚拟化的服务器之间组网互通。主机Overlay使用服务器上的vSwitch软件实现VXLAN网络功能，VXLAN技术中的VTEP、VXLAN GW、VXLAN IP GW 均通过安装在服务器上的vSwitch软件实现，只需要物理网络设备支持IP转发即可，所有IP可达的主机即可构建一个大范围二层网络。
 
 这种主机Overlay技术实现，屏蔽了物理网络的模型与拓扑差异，将物理网络的技术实现与计算虚拟化的关键要求分离开来，几乎可以支持以太网在任意网络上的透传，使得云的计算资源调度范围空前扩大。为了使得VXLAN Overlay网络更加简化运行管理，便于云的服务提供，各厂家使用集中控制的模型，将分散在多个物理服务器上的vSwitch构成一个大型的、虚拟化的分布式Overlay vSwitch，只要在分布式vSwitch范围内，**虚拟机在不同物理服务器上的迁移，便被视为在一个虚拟的设备上迁移，如此大大降低了云中资源的调度难度和复杂度。**
@@ -122,6 +128,18 @@ Intel提出来SR-IOV这个东西。SR-IOV最初应用在网卡上。简单的说
 混合Overlay组网灵活，即可以支持虚拟化的服务器,也可以支持利旧的未虚拟化物理服务器，以及必须使用物理服务器提升性能的数据库等业务，所以混合Overlay的主要定位是Overlay整体解决方案，它可以为客户提供自主化、多样化的选择。
 
 混合Overlay主要面向愿意即要保持虚拟化的灵活性,又需要兼顾对于高性能业务的需求, 或者充分利旧服务器的要求,满足客户从传统数据中心向基于SDN的数据中心平滑演进的需求。
+
+###### vSwitch and Switch路由同步
+
+##### 混合Overlay路由同步：frr
+
+假设基于OVS实现的vSwitch，作为Leaf，与物理Spine组网。
+
+N个运行OVS的宿主机都是请求彼此ovs vswtich上的vms路由信息的，但是有些基于物理Leaf设备的路由，天然和ovs vswitch信息不同的。
+
+所以，需要ovs 宿主机上要借助一个agent，通过bgp协议从RR(Spine设备)同步物理Leaf上的信息,并翻译成ovs vswitch可以理解的路由。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/混合overlay路由.jpg)
 
 #### Overlay组网流量转发:star:
 
@@ -163,9 +181,17 @@ VXLAN技术已经成为目前Overlay技术事实上的标准，得到了非常�
 
 VXLAN（Virtual eXtensible LAN，可扩展虚拟局域网络）是基于IP网络、采用“MAC in UDP”封装形式的二层VPN技术。VXLAN可以基于已有的服务提供商或企业IP网络，为分散的物理站点提供二层互联功能，主要应用于数据中心网络。
 
+####　混合Overlay实现demo
 
+主机与主机之间使用：geneve 
 
+主机和网络设备之间使用：VxLAN
 
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/混合overlay-demo.jpg)
+
+主机overlay架构
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/主机Overlay架构.jpg)
 
 
 

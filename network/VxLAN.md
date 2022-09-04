@@ -484,9 +484,11 @@ end
 
 ### VxLAN网关:fire:
 
-
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan-L2-and-L3-traffic-flow.jpg)
 
 #### 二层网关
+
+L2网关主要解决的就是同一VNI下的VM之间的互访。
 
 用于解决租户接入VXLAN虚拟网络的问题，也可用于同一VXLAN虚拟网络的子网通信。
 
@@ -521,7 +523,35 @@ end
 
 #### 三层网关
 
-用于VXLAN虚拟网络的跨子网通信以及**外部网络的访问**
+**L3网关解决的就是不同VNI以及VXLAN和非VXLAN之间的互访。**
+
+L3网关分为集中式网关和分布式网关，这2者的主要区别就在于L3网关是在leaf上还是在spine上。
+
+用于VXLAN虚拟网络的跨子网通信以及外部网络的访问
+
+VRF： Virtual Routing and Forwarding
+
+VXLAN通过边界节点和外部连接，边界节点负责对VXLAN进行解封装，和外部交换路由，边界节点有两种选择。
+
+L2 and L3 gateway
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan&&non-vxlan.png)
+
+##### Spine作为边界：集中式
+
+使用spine作为边界节点。在使用spine作为边界节点时，为了使spine上路由的一致性，建议所有的spine都和外部连接。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxaln-spine-border.png)
+
+##### Leaf作为边界：分布式
+
+使用专门的leaf作为边界节点。这种情况下，对于南北流量，增加了额外的一跳；但也使得spine不用承担VTEP功能，减轻VTEP负担。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan-leaf-border.png)
+
+
+
+
 
 虚拟机要想与外部网络进行三层通信，需要在接入虚拟机的本地分布式VXLAN IP网关上指定流量的下一跳为Border，可以通过如下方式来实现：
 
@@ -570,76 +600,9 @@ end
 
 end
 
-### VxLAN外部连接方式
-
-VRF： Virtual Routing and Forwarding
-
-VXLAN通过边界节点和外部连接，边界节点负责对VXLAN进行解封装，和外部交换路由，边界节点有两种选择。
-
-L2 and L3 gateway
-
-![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan&&non-vxlan.png)
-
-#### Spine作为边界：L3
-
-使用spine作为边界节点。在使用spine作为边界节点时，为了使spine上路由的一致性，建议所有的spine都和外部连接。
-
-![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxaln-spine-border.png)
 
 
 
-#### Leaf作为边界：L2
-
-使用专门的leaf作为边界节点。这种情况下，对于南北流量，增加了额外的一跳；但也使得spine不用承担VTEP功能，减轻VTEP负担。
-
-![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan-leaf-border.png)
-
-### VxLAN 3层外部连接
-
-VXLAN边界节点对出方向的VXLAN流量进行解封装，同时保持数据包中关于VRF,或租户信息。可使用的方法包括VRF Lite , LISP, MPLS L3 VPN。
-
-#### 全互联模型和U型模型
-
-![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan-L3-mesh.png)
-
-该模型中，每个边界节点和所有外部设备互联，保证网络具有足够的弹性；边界节点之间不需要线互联，直接和外部交换路由，无需在两台边界设备之间进行路由同步。全互联模型不会产生流量黑洞问题。
-另一种可选的模型时U形连接。
-
-![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan-L3-U.png)
-
-该模型中，每台边界节点和一台外部设备相连，两台边界节点相连
-
-#### VRF Lite/Inter-AS Option A
-
-在确定了可选的连接方式后，VXLAN外部连接需要考虑的时，VXLAN内部和外部之间如何传递路由。最简单的两个方式就是VRF Lite 或Inter-AS Option A 。
-如图：
-
-![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan-L3-VRF.png)
-
-
-
-实现方式如下：
-
-* 使用option A的方式，在edge router 上为每个用户创建VRF,对应border leaf上的客户。
-* border 和edge router 之间路由交换可以在vrf内运行路由协议，可以使用静态，或动态的路由协议。最简便的是使用eBGP路由协议，在border leaf上就不需要进行重分布；
-* 如果使用其他路由协议，在将IBGP重分布到IGP时，需要进行过滤；只需要将IBGP 属性为internal 的路由通告到IGP中，同时进行路由汇总，尽量避免/32路由通告到IGP中。
-* 在border leaf 和edge router 可以部署BFD加快故障检测和倒换
-
-#### MPLS L3VPN:star2:
-
-![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan-mpls-l3vpn.png)
-
-该方式下，将border leaf当作MPLS PE，将eVNP路由重新生成L3VNP的路由，通过BGP eVNP传递给远端的PE，在通告给远端时，需要抑制主机路由；从远端PE收到VNPV4路由时，将VNPV4路由重新生成L2VNP路由。
-
-### VxLAN 2层外部连接
-
-二层连接使用以下拓扑，外部网络通过vPC连接到border-leaf。
-
-![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan-l2-gw.png)
-
-由于BPDU报文不会通过VXLAN传播，且VTEP之间是二层互通，因此避免在让VXLAN fabric参与STP的计算，部署时，将VTEP当作STP的边缘设备。
-
-图中，VPC应该表示一个数据中心中包含基础服务的vpc，如DNS、DHCP
 
 ### VxLAN控制平面
 
@@ -780,7 +743,7 @@ VXLAN ID: 2020, VSI name: 20
 
 使用vxlan网络时，呈现给用户时，应该屏蔽掉这些细节。
 
-### VXLAN and VPN
+### VXLAN and MPLS VPN
 
 Virtual Extensible LAN (VXLAN) uses MAC-in-UDP encapsulation. It is a type of Network Virtualization over Layer 3 (NVO3) technology. Key reasons for selecting VXLAN can be:
 

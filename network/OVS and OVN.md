@@ -4,6 +4,10 @@
 
 OVS 只是一个单机软件，它并没有集群的信息，自己无法了解整个集群的虚拟网络状况，也就无法只通过自己来构建集群规模的虚拟网络。这就好比是单机的 Docker，而 OVN 就相当于是 OVS 的k8s，它提供了一个集中式的 OVS 控制器。这样可以从集群角度对整个网络设施进行编排。同时 OVN 也是新版 OpenStack 中 Neutron 的后端实现，基本可以认为未来的 OpenStack 网络都是通过OVN 来进行控制的。
 
+#### 应用？
+
+如果host_1上有一个vm1，vm1所属vxlan_01是switch_01，host_2上有一个vm2，vm2也所属vxlan_01，则host_1和host_2都有switch_01且有vxlan_01下所有vms信息。
+
 ### ovs 问题排查
 
 vlan是交换机上的元数据，云平台下发虚拟机时给vm指定vlan就是给vm指定网络了，同vlan在一个网段就能通信
@@ -39,7 +43,7 @@ native-untagged端口类似于native-tagged端口，不同点是native VLAN中�
 
 L3 VNI与二层VNI是完全不同的。L2 VNI映射的是一个VLAN，或者一个子网；L3 VNI映射的是一个VRF。
 
-
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan-L2-and-L3-traffic-flow.jpg)
 
 ### OVS：as Docker
 
@@ -523,8 +527,6 @@ OVN引入了两个全新的OVSDB，
 - 一个叫Northbound DB（北向数据库，NB），
 - 一个叫Southbound DB（南向数据库，SB）
 
-OVN由以下组件构成：
-
 ##### CMS（云管理系统）
 
 CMS : Cloud Management System ???   
@@ -663,13 +665,19 @@ OVS 的 tunnel 封装是由 Openflow 流表来做的，所以 ovn-controller 需
 
    **OVN tunnel 里面所携带的 logical input port identifier 和 logical output port identifier 可以提高流表的查找效率，OVS 流表可以通过这两个值来处理报文，不需要解析报文的字段。** OVN 里面的 tunnel 类型是由 HV 上面的 ovn-controller 来设置的，并不是由 CMS 指定的，并且 OVN 里面的 tunnel ID 又由 OVN 自己分配的，所以用 neutron 创建 network 时指定 tunnel 类型和 tunnel ID（比如 vnid）是无用的，OVN 不做处理。
 
+##### Datapath
 
+0.0
 
 #### OVN Overlay:heavy_check_mark:
 
 OVN 支持三种隧道模式，Geneve，STT 和 VxLAN，但是其中 VxLAN 并不是什么情况下就能用的，Hypervisor 到 Hypervisor 之间的隧道模式只能走 Geneve 和 STT，到 GW 和 Vtep GW 的隧道才能用 VxLAN。
 
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/geneve-vxlan.jpg)
+
+##### 比ovs多了一个gwswitch？
+
+？？？
 
 ##### Why Geneve & STT
 
@@ -679,7 +687,7 @@ OVN 支持三种隧道模式，Geneve，STT 和 VxLAN，但是其中 VxLAN 并�
 
 STT 由于是 fake 出来的 TCP 包，网卡只要支持 TSO，就很容易达到高性能。VxLAN 现在一般网卡也都支持 Offloading 了，但是就笔者经验，可能还有各种各样的问题。Geneve 比较新，也有新网卡支持了.
 
-##### Geneve in OVN:factory:
+#### Geneve in OVN:factory:
 
 OVSDB 里的 Geneve tunnel 长这样
 
@@ -698,7 +706,7 @@ key=flow 含义是 VNI 由 flow 来决定。
 
 OVN 使用了 VNI 和 Options 来携带了 Metadata，其中
 
-###### Logical Datapath as VNI
+##### Logical Datapath as VNI: datapath?
 
 VNI 使用了 Logical Datapath，也就是 0xb1, 这个和 southbound database 里 datapath_binding 表里的 tunnel key 一致
 
@@ -708,7 +716,7 @@ external_ids        : {logical-switch="182eaadd-2cc3-4ff3-9bef-3793bb2463ec", na
 tunnel_key          : 177
 ```
 
-###### Options
+##### Options
 
 Options 里携带了一个 OVN 的 TLV，其中 Option Data 为 0001002，其中第一个 0 是保留位。后面的 001 和 002 是 Logical Inpurt Port 和 Logical Output Port，和 southbound database 里的 port_biding 表里的 tunnel key 一致。
 
@@ -736,7 +744,7 @@ tunnel_key         : 2
 type               : ""
 ```
 
-###### Show Me The Code
+##### Show Me The Code
 
 在 ovn/controller/physical.h 中，定义 Class 为 0x0102 和 type 0x80，可以看到和上图一致。
 
@@ -797,6 +805,18 @@ put_encapsulation(enum mf_field_id mff_ovn_geneve,
 end
 
 #### OVN实践
+
+##### 常用命令
+
+```bash
+
+## 查看路由策略
+ovn-nbctl lr-route-list  XXX_NAME
+
+ovn-nbctl lr-pre-route-list
+```
+
+
 
 ##### 搭建ovn环境
 

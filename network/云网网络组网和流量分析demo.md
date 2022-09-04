@@ -87,7 +87,11 @@
 
 用户数据中心的流量经过专线VLAN到达专线接入ACC，在专线ACC上根据VRF区分不同的专线，通过指定的VLAN到达专线FW，在专线FW经过指定的策略或者NAT后，根据跨VRF的路由转换为VPC内子网的流量，达到专线Leaf，封装为指定的VXLAN，到达业务网的Leaf，解封装VXLAN,流量到达虚机。
 
+#### NAT 和 EIP流量模型
 
+FW实现了EIP和NAT等配置，转换完成后再把流量丢回给Border，然后发送到互联网出口。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/nat-eip-流量模型.jpg)
 
 #### 内网核心switch
 
