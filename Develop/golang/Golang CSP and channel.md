@@ -1,5 +1,9 @@
 ## Golang **CSP** and Channel
 
+### 大佬笔记
+
+https://halfrost.com/go_channel/
+
 ### Hoare  I/O
 
 C.A.R Hoare 1978 的萌芽论文，认为输入输出在一种模型编程语言中是基本要素。
@@ -95,13 +99,31 @@ v := <-ch  // Receive from ch, and
 
 Golang，其实只用到了 CSP 的很小一部分，即理论中的 Process/Channel（对应到语言中的 goroutine/channel）：这两个并发原语之间没有从属关系， Process 可以订阅任意个 Channel，Channel 也并不关心是哪个 Process 在利用它进行通信；Process 围绕 Channel 进行读写，形成一套有序阻塞和可预测的并发模型。
 
-#### 总结
+#### channel数据通讯概述
 
 简单来说，CSP 模型由并发执行的实体（线程或者进程或者协程）所组成，实体之间通过发送消息进行通信，这里发送消息时使用的就是通道，或者叫 channel。
 
 CSP 模型的关键是关注 channel，而不关注发送消息的实体。Go 语言实现了 CSP 部分理论，goroutine 对应 CSP 中并发执行的实体，channel 也就对应着 CSP 中的 channel。
 
 Channel 在 gouroutine 间架起了一条管道，在管道里传输数据，实现 gouroutine 间的通信；由于它是线程安全的，所以用起来非常方便；channel 还提供“先进先出”的特性；它还能影响 goroutine 的阻塞和唤醒。
+
+G1 负责给ch写数据，G2负责读数据。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/channel-communication-1.jpg)
+
+G1交接收到的数据直接写入到recv的内存地址
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/goroutine-communication-2.jpg)
+
+基于值拷贝，实现G1和G2数值传递
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/goroutine-communication-3.jpg)
+
+简单明了
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/goroutine-communication-4.jpg)
+
+
 
 综合来说，CSP 1978 中描述的编程语言（与 Go 所构建的基于通道的 channel/select 同步机制进行对比）：
 
@@ -114,7 +136,547 @@ Channel 在 gouroutine 间架起了一条管道，在管道里传输数据，实
 7. CSP 1978 中描述的编程语言对程序终止性的讨论几乎为零
 8. 此时与 Actor 模型进行比较，CSP 与 Actor 均在实体间直接通信，区别在于 Actor 支持异步消息通信，而 CSP 1978 是同步通信
 
+### sync and channel
 
+Go 中的并发原语主要分为 2 大类，一个是 sync 包里面的，另一个是 channel。sync 包里面主要是 WaitGroup，互斥锁和读写锁，cond，once，sync.Pool 这一类。
+
+ 在 Go 语言的官方 FAQ 中，描述了如何选择这些并发原语：
+
+> 为了尊重 mutex，sync 包实现了 mutex，但是我们希望 Go 语言的编程风格将会激励人们尝试更高等级的技巧。尤其是考虑构建你的程序，以便一次只有一个 goroutine 负责某个特定的数据
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/sync-and-channel.png)
+
+#### sync应用场景
+
+在 2 种情况下推荐使用 sync 包：
+
+- 对性能要求极高的临界区
+- 保护某个结构内部状态和完整性
+
+关于保护某个结构内部的状态和完整性。例如 Go 源码中如下代码：
+
+```go
+var sum struct {
+	sync.Mutex
+	i int
+}
+
+//export Add
+func Add(x int) {
+	defer func() {
+		recover()
+	}()
+	sum.Lock()
+	sum.i += x
+	sum.Unlock()
+	var p *int
+	*p = 2
+}
+```
+
+sum 这个结构体不想将内部的变量暴露在结构体之外，所以使用 sync.Mutex 来保护线程安全。
+
+#### channel应用场景
+
+channel 也有 2 种情况：
+
+- 输出数据给其他使用方
+- 组合多个逻辑
+
+输出数据给其他使用方的目的是转移数据的使用权。并发安全的实质是保证同时只有一个并发上下文拥有数据的所有权。channel 可以很方便的将数据所有权转给其他使用方。另一个优势是组合型。如果使用 sync 里面的锁，想实现组合多个逻辑并且保证并发安全，是比较困难的。但是使用 channel + select 实现组合逻辑实在太方便了。
+
+### channel发送数据:+1:
+
+#### send异常检查
+
+chansend() 函数一开始先进行异常检查：
+
+Go
+
+```go
+func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
+    // 判断 channel 是否为 nil
+	if c == nil {
+		if !block {
+			return false
+		}
+		gopark(nil, nil, waitReasonChanSendNilChan, traceEvGoStop, 2)
+		throw("unreachable")
+	}
+
+	if debugChan {
+		print("chansend: chan=", c, "\n")
+	}
+
+	if raceenabled {
+		racereadpc(c.raceaddr(), callerpc, funcPC(chansend))
+	}
+
+	// 简易快速的检查
+	if !block && c.closed == 0 && full(c) {
+		return false
+	}
+......
+}
+```
+
+chansend() 一上来对 channel 进行检查，如果被 GC 回收了会变为 nil。朝一个为 nil 的 channel 发送数据会发生阻塞。gopark 会引发以 waitReasonChanSendNilChan 为原因的休眠，并抛出 unreachable 的 fatal error。当 channel 不为 nil，再开始检查在没有获取锁的情况下会导致发送失败的非阻塞操作。
+
+当 channel 不为 nil，并且 channel 没有 close 时，还需要检查此时 channel 是否做好发送的准备，即判断 full(c)
+
+```go
+func full(c *hchan) bool {
+	if c.dataqsiz == 0 {
+		// 假设指针读取是近似原子性的
+		return c.recvq.first == nil
+	}
+	// 假设读取 uint 是近似原子性的
+	return c.qcount == c.dataqsiz
+}
+```
+
+full() 方法作用是判断在 channel 上发送是否会阻塞（即通道已满）。它读取单个字节大小的可变状态(recvq.first 和 qcount)，尽管答案可能在一瞬间是 true，但在调用函数收到返回值时，正确的结果可能发生了更改。值得注意的是 dataqsiz 字段，它在创建完 channel 以后是不可变的，因此它可以安全的在任意时刻读取。
+
+回到 chansend() 异常检查中。一个已经 close 的 channel 是不可能从“准备发送”的状态变为“未准备好发送”的状态。所以在检查完 channel 是否 close 以后，就算 channel close 了，也不影响此处检查的结果。可能有读者疑惑，“能不能把检查顺序倒一倒？先检查是否 full()，再检查是否 close？”。这样倒过来确实能保证检查 full() 的时候，channel 没有 close。但是这种做法也没有实质性的改变。channel 依旧可以在检查完 close 以后再关闭。其实我们依赖的是 chanrecv() 和 closechan() 这两个方法在锁释放后，它们更新这个线程 c.close 和 full() 的结果视图。
+
+#### 同步发送
+
+channel 异常状态检查以后，接下来的代码是发送的逻辑
+
+```go
+func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
+......
+
+	lock(&c.lock)
+
+	if c.closed != 0 {
+		unlock(&c.lock)
+		panic(plainError("send on closed channel"))
+	}
+
+	if sg := c.recvq.dequeue(); sg != nil {
+		send(c, sg, ep, func() { unlock(&c.lock) }, 3)
+		return true
+	}
+
+......
+
+}
+```
+
+在发送之前，先上锁，保证线程安全。并再一次检查 channel 是否关闭。如果关闭则抛出 panic。加锁成功并且 channel 未关闭，开始发送。如果有正在阻塞等待的接收方，通过 dequeue() 取出头部第一个非空的 sudog，调用 send() 函数:
+
+```go
+func send(c *hchan, sg *sudog, ep unsafe.Pointer, unlockf func(), skip int) {
+	if sg.elem != nil {
+		sendDirect(c.elemtype, sg, ep)
+		sg.elem = nil
+	}
+	gp := sg.g
+	unlockf()
+	gp.param = unsafe.Pointer(sg)
+	sg.success = true
+	if sg.releasetime != 0 {
+		sg.releasetime = cputicks()
+	}
+	goready(gp, skip+1)
+}
+```
+
+send() 函数主要完成了 2 件事：
+
+- 调用 sendDirect() 函数将数据拷贝到了接收变量的内存地址上
+- 调用 goready() 将等待接收的阻塞 goroutine 的状态从 Gwaiting 或者 Gscanwaiting 改变成 **Grunnable**。下一轮调度时会唤醒这个接收的 goroutine。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/channel同步发送.png)
+
+可以看下goready() 的实现。理解了它的源码，就能明白为什么往 channel 中发送数据并非立即可以从接收方获取到。
+
+
+
+#### 异步发送
+
+如果初始化 channel 时创建的带缓冲区的异步 Channel，当接收者队列为空时，这是会进入到异步发送逻辑：
+
+```go
+func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
+......
+
+	if c.qcount < c.dataqsiz {
+		qp := chanbuf(c, c.sendx)
+		if raceenabled {
+			racenotify(c, c.sendx, nil)
+		}
+		typedmemmove(c.elemtype, qp, ep)
+		c.sendx++
+		if c.sendx == c.dataqsiz {
+			c.sendx = 0
+		}
+		c.qcount++
+		unlock(&c.lock)
+		return true
+	}
+	
+......
+}
+```
+
+如果 qcount 还没有满，则调用 chanbuf() 获取 sendx 索引的元素指针值。调用 typedmemmove() 方法将发送的值拷贝到缓冲区 buf 中。拷贝完成，需要维护 sendx 索引下标值和 qcount 个数。这里将 buf 缓冲区设计成环形的，索引值如果到了队尾，下一个位置重新回到队头。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/channel异步发送.png)
+
+#### 阻塞发送
+
+当 channel 处于打开状态，但是没有接收者，并且没有 buf 缓冲队列或者 buf 队列已满，这时 channel 会进入阻塞发送。
+
+```go
+func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
+......
+
+	if !block {
+		unlock(&c.lock)
+		return false
+	}
+	
+	gp := getg()
+	mysg := acquireSudog()
+	mysg.releasetime = 0
+	if t0 != 0 {
+		mysg.releasetime = -1
+	}
+	mysg.elem = ep
+	mysg.waitlink = nil
+	mysg.g = gp
+	mysg.isSelect = false
+	mysg.c = c
+	gp.waiting = mysg
+	gp.param = nil
+	c.sendq.enqueue(mysg)
+	atomic.Store8(&gp.parkingOnChan, 1)
+	gopark(chanparkcommit, unsafe.Pointer(&c.lock), waitReasonChanSend, traceEvGoBlockSend, 2)
+	KeepAlive(ep)
+......
+}
+```
+
+- 调用 getg() 方法获取当前 goroutine 的指针，用于绑定给一个 sudog。
+- 调用 acquireSudog() 方法获取一个 sudog，可能是新建的 sudog，也有可能是从缓存中获取的。设置好 sudog 要发送的数据和状态。比如发送的 Channel、是否在 select 中和待发送数据的内存地址等等。
+- 调用 c.sendq.enqueue 方法将配置好的 sudog 加入待发送的等待队列。
+- 设置原子信号。当栈要 shrink 收缩时，这个标记代表当前 goroutine 还 parking 停在某个 channel 中。在 g 状态变更与设置 activeStackChans 状态这两个时间点之间的时间窗口进行栈 shrink 收缩是不安全的，所以需要设置这个原子信号。
+- 调用 gopark 方法挂起当前 goroutine，状态为 waitReasonChanSend，阻塞等待 channel。
+- 最后，KeepAlive() 确保发送的值保持活动状态，直到接收者将其复制出来。 sudog 具有指向堆栈对象的指针，但 sudog 不能被当做堆栈跟踪器的 root。发送的数值是分配在堆上，这样可以避免被 GC 回收。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/channel阻塞发送.png)
+
+chansend() 函数最后返回 true 表示成功向 Channel 发送了数据。
+
+#### channel发送总结
+
+ channel 各个状态做一个小结。
+
+|       |               Channel Status               |    Result     |
+| :---: | :----------------------------------------: | :-----------: |
+| Write |                    nil                     |     阻塞      |
+| Write | 打开但填满（无缓存channel为0，写入即阻塞） |     阻塞      |
+| Write |                 打开但未满                 |  成功写入值   |
+| Write |                    关闭                    |   **panic**   |
+| Write |                    只读                    | Compile Error |
+
+channel 发送过程中包含 2 次有关 goroutine 调度过程：
+
+- 当接收队列中存在 sudog 可以直接发送数据时，执行 `goready()`将 g 插入 runnext 插槽中，状态从 Gwaiting 或者 Gscanwaiting 改变成 Grunnable，等待下次调度便立即运行。
+- 当 channel 阻塞时，执行 `gopark()` 将 g 阻塞，让出 cpu 的使用权。
+
+**需要强调的是，**通道并不提供跨 goroutine 的数据访问保护机制。如果通过通道传输数据的一份副本，那么每个 goroutine 都持有一份副本，各自对自己的副本做修改是安全的。当传输的是指向数据的指针时，如果读和写是由不同的 goroutine 完成的，那么每个 goroutine 依旧需要额外的同步操作。
+
+### channel接收数据:+1:
+
+2 种不同的 channel 接收方式会转换成 runtime.chanrecv1 和 runtime.chanrecv2 两种不同函数的调用，但是最终核心逻辑还是在 runtime.chanrecv 中。
+
+#### recv异常检查
+
+chanrecv() 函数一开始先进行异常检查：
+
+```go
+func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool) {
+	if debugChan {
+		print("chanrecv: chan=", c, "\n")
+	}
+
+	if c == nil {
+		if !block {
+			return
+		}
+		gopark(nil, nil, waitReasonChanReceiveNilChan, traceEvGoStop, 2)
+		throw("unreachable")
+	}
+
+	// 简易快速的检查
+	if !block && empty(c) {
+		if atomic.Load(&c.closed) == 0 {
+			return
+		}
+		if empty(c) {
+			// channel 不可逆的关闭了且为空
+			if raceenabled {
+				raceacquire(c.raceaddr())
+			}
+			if ep != nil {
+				typedmemclr(c.elemtype, ep)
+			}
+			return true, false
+		}
+	}
+```
+
+chanrecv() 一上来对 channel 进行检查，如果被 GC 回收了会变为 nil。从一个为 nil 的 channel 中接收数据会发生阻塞。gopark 会引发以 waitReasonChanReceiveNilChan 为原因的休眠，并抛出 unreachable 的 fatal error。当 channel 不为 nil，再开始检查在没有获取锁的情况下会导致接收失败的非阻塞操作。
+
+这里进行的简易快速的检查，检查中状态不能发生变化。这一点和 chansend() 函数有区别。在 chansend() 简易快速的检查中，改变顺序对检查结果无太大影响，但是此处如果检查过程中状态发生变化，如果发生了 racing，检查结果会出现完全相反的错误的结果。例如以下这种情况：channel 在第一个和第二个 if 检查时是打开的且非空，于是在第二个 if 里面 return。但是 return 的瞬间， channel 关闭且空。这样判断出来认为 channel 是打开的且非空。明显是错误的结果，实际上 channel 是关闭且空的。同理检查是否为空的时候也会发生状态反转。为了防止错误的检查结果，c.closed 和 empty() 都必须使用原子检查。
+
+```go
+func empty(c *hchan) bool {
+	// c.dataqsiz 是不可变的
+	if c.dataqsiz == 0 {
+		return atomic.Loadp(unsafe.Pointer(&c.sendq.first)) == nil
+	}
+	return atomic.Loaduint(&c.qcount) == 0
+}
+```
+
+这里总共检查了 2 次 empty()，因为第一次检查时， channel 可能还没有关闭，但是第二次检查的时候关闭了，在 2 次检查之间可能有待接收的数据到达了。所以需要 2 次 empty() 检查。
+
+不过就算按照上述源码检查，细心的读者可能还会举出一个反例，例如，关闭一个已经阻塞的同步的 channel，最开始的 !block && empty(c) 为 false，会跳过这个检查。这种情况不能算在正常 chanrecv() 里面。上述是不获取锁的情况检查会接收失败的情况。接下来在获取锁的情况下再次检查一遍异常情况。
+
+```go
+func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool) {
+......
+	lock(&c.lock)
+
+	if c.closed != 0 && c.qcount == 0 {
+		if raceenabled {
+			raceacquire(c.raceaddr())
+		}
+		unlock(&c.lock)
+		if ep != nil {
+			typedmemclr(c.elemtype, ep)
+		}
+		return true, false
+	}
+......
+```
+
+如果 channel 已经关闭且不存在缓存数据了，则清理 ep 指针中的数据并返回。这里也是从已经关闭的 channel 中读数据，读出来的是该类型零值的原因。
+
+#### 同步接收
+
+同 chansend 逻辑类似，检查完异常情况，紧接着是同步接收。
+
+```go
+func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool) {
+......
+
+	if sg := c.sendq.dequeue(); sg != nil {
+		recv(c, sg, ep, func() { unlock(&c.lock) }, 3)
+		return true, true
+	}
+......
+```
+
+在 channel 的发送队列中找到了等待发送的 goroutine。取出队头等待的 goroutine。如果缓冲区的大小为 0，则直接从发送方接收值。否则，对应缓冲区满的情况，从队列的头部接收数据，发送者的值添加到队列的末尾（此时队列已满，因此两者都映射到缓冲区中的同一个下标）。同步接收的核心逻辑见下面 recv() 函数：
+
+```go
+func recv(c *hchan, sg *sudog, ep unsafe.Pointer, unlockf func(), skip int) {
+	if c.dataqsiz == 0 {
+		if raceenabled {
+			racesync(c, sg)
+		}
+		if ep != nil {
+			// 从 sender 里面拷贝数据
+			recvDirect(c.elemtype, sg, ep)
+		}
+	} else {
+	    // 这里对应 buf 满的情况
+		qp := chanbuf(c, c.recvx)
+		if raceenabled {
+			racenotify(c, c.recvx, nil)
+			racenotify(c, c.recvx, sg)
+		}
+		// 将数据从 buf 中拷贝到接收者内存地址中
+		if ep != nil {
+			typedmemmove(c.elemtype, ep, qp)
+		}
+		// 将数据从 sender 中拷贝到 buf 中
+		typedmemmove(c.elemtype, qp, sg.elem)
+		c.recvx++
+		if c.recvx == c.dataqsiz {
+			c.recvx = 0
+		}
+		c.sendx = c.recvx // c.sendx = (c.sendx+1) % c.dataqsiz
+	}
+	sg.elem = nil
+	gp := sg.g
+	unlockf()
+	gp.param = unsafe.Pointer(sg)
+	sg.success = true
+	if sg.releasetime != 0 {
+		sg.releasetime = cputicks()
+	}
+	goready(gp, skip+1)
+}
+```
+
+需要注意的是由于有发送者在等待，所以**如果存在缓冲区，那么缓冲区一定是满的**。这个情况对应发送阶段阻塞发送的情况，如果缓冲区还有空位，发送的数据直接放入缓冲区，只有当缓冲区满了，才会打包成 sudog，插入到 sendq 队列中等待调度。注意理解这一情况。
+
+接收时主要分为 2 种情况，有缓冲且 buf 满和无缓冲的情况：
+
+- 无缓冲。ep 发送数据不为 nil，调用 recvDirect() 将发送队列中 sudog 存储的 ep 数据直接拷贝到接收者的内存地址中。
+
+  ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/channel同步接收.png)
+
+- 有缓冲并且 buf 满。有 2 次 copy 操作，先将队列中 recvx 索引下标的数据拷贝到接收方的内存地址，再将发送队列头的数据拷贝到缓冲区中，释放一个 sudog 阻塞的 goroutine。
+
+  有缓冲且 buf 满的情况需要注意，取数据从缓冲队列头取出，发送的数据放在队列尾部，由于 buf 装满，取出的 recvx 指针和发送的 sendx 指针指向相同的下标。
+
+  ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/channel同步接收-2.png)
+
+  最后调用 goready() 将等待接收的阻塞 goroutine 的状态从 Gwaiting 或者 Gscanwaiting 改变成 Grunnable。下一轮调度时会唤醒这个发送的 goroutine。这部分逻辑和同步发送中一致，关于 goready() 底层实现的代码不在赘述。
+
+
+
+#### 异步接收
+
+如果 Channel 的缓冲区中包含一些数据时，从 Channel 中接收数据会直接从缓冲区中 recvx 的索引位置中取出数据进行处理：
+
+```go
+func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool) {
+......
+
+	if c.qcount > 0 {
+		// 直接从队列中接收
+		qp := chanbuf(c, c.recvx)
+		if raceenabled {
+			racenotify(c, c.recvx, nil)
+		}
+		if ep != nil {
+			typedmemmove(c.elemtype, ep, qp)
+		}
+		typedmemclr(c.elemtype, qp)
+		c.recvx++
+		if c.recvx == c.dataqsiz {
+			c.recvx = 0
+		}
+		c.qcount--
+		unlock(&c.lock)
+		return true, true
+	}
+
+	if !block {
+		unlock(&c.lock)
+		return false, false
+	}
+......
+```
+
+上述代码比较简单，如果接收数据的内存地址 ep 不为空，则调用 runtime.typedmemmove() 将缓冲区内的数据拷贝到内存中，并通过 typedmemclr() 清除队列中的数据
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/channel-异步接收.png)
+
+维护 recvx 下标，如果移动到了环形队列的队尾，下标需要回到队头。最后减少 qcount 计数器并释放持有 Channel 的锁。
+
+
+
+#### 阻塞接收
+
+如果 channel 发送队列上没有待发送的 goroutine，并且缓冲区也没有数据时，将会进入到最后一个阶段阻塞接收：
+
+```go
+func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool) {
+......
+
+	gp := getg()
+	mysg := acquireSudog()
+	mysg.releasetime = 0
+	if t0 != 0 {
+		mysg.releasetime = -1
+	}
+	mysg.elem = ep
+	mysg.waitlink = nil
+	gp.waiting = mysg
+	mysg.g = gp
+	mysg.isSelect = false
+	mysg.c = c
+	gp.param = nil
+	c.recvq.enqueue(mysg)
+	atomic.Store8(&gp.parkingOnChan, 1)
+	gopark(chanparkcommit, unsafe.Pointer(&c.lock), waitReasonChanReceive, traceEvGoBlockRecv, 2)
+......
+```
+
+- 调用 getg() 方法获取当前 goroutine 的指针，用于绑定给一个 sudog。
+- 调用 acquireSudog() 方法获取一个 sudog，可能是新建的 sudog，也有可能是从缓存中获取的。设置好 sudog 要发送的数据和状态。比如发送的 Channel、是否在 select 中和待发送数据的内存地址等等。
+- 调用 c.recvq.enqueue 方法将配置好的 sudog 加入待发送的等待队列。
+- 设置原子信号。当栈要 shrink 收缩时，这个标记代表当前 goroutine 还 parking 停在某个 channel 中。在 g 状态变更与设置 activeStackChans 状态这两个时间点之间的时间窗口进行栈 shrink 收缩是不安全的，所以需要设置这个原子信号。
+- 调用 gopark 方法挂起当前 goroutine，状态为 waitReasonChanReceive，阻塞等待 channel。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/channel阻塞接收.png)
+
+上面这段代码与 chansend() 中阻塞发送几乎完全一致，区别在于最后一步没有 KeepAlive(ep)。
+
+```go
+func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool) {
+......
+
+	// 被唤醒
+	if mysg != gp.waiting {
+		throw("G waiting list is corrupted")
+	}
+	gp.waiting = nil
+	gp.activeStackChans = false
+	if mysg.releasetime > 0 {
+		blockevent(mysg.releasetime-t0, 2)
+	}
+	success := mysg.success
+	gp.param = nil
+	mysg.c = nil
+	releaseSudog(mysg)
+	return true, success
+}
+```
+
+goroutine 被唤醒后会完成 channel 的阻塞数据接收。接收完最后进行基本的参数检查，解除 channel 的绑定并释放 sudog。
+
+#### channel接收总结
+
+关于 channel 接收的源码实现已经分析完了，针对 channel 各个状态做一个小结。
+
+|      | Channel status |     Result      |
+| :--: | :------------: | :-------------: |
+| Read |      nil       |      阻塞       |
+| Read |   打开且非空   |    读取到值     |
+| Read |   打开但为空   |      阻塞       |
+| Read |      关闭      | <默认值>, false |
+| Read |      只读      |  Compile Error  |
+
+chanrecv 的返回值有几种情况：
+
+```go
+tmp, ok := <-ch
+```
+
+|   Channel status   | Selected | Received |
+| :----------------: | :------: | :------: |
+|        nil         |  false   |  false   |
+|     打开且非空     |   true   |   true   |
+|     打开但为空     |  false   |  false   |
+| 关闭且返回值是零值 |   true   |  false   |
+
+received 值会传递给读取 channel 外部的 bool 值 ok，selected 值不会被外部使用。
+
+channel 接收过程中包含 2 次有关 goroutine 调度过程：
+
+1. 当 channel 为 nil 时，执行 gopark() 挂起当前的 goroutine。
+2. 当发送队列中存在 sudog 可以直接接收数据时，执行 goready()将 g 插入 runnext 插槽中，状态从 Gwaiting 或者 Gscanwaiting 改变成 Grunnable，等待下次调度便立即运行。
+3. 当 channel 缓冲区为空，且没有发送者时，这时 channel 阻塞，执行 gopark() 将 g 阻塞，让出 cpu 的使用权并等待调度器的调度。
 
 ### 优雅关闭channel:star2:
 
