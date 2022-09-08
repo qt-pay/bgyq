@@ -1,5 +1,7 @@
 ## Golang **CSP** and Channel
 
+Each channel internally holds a mutex lock which is used to avoid data races in all kinds of operations.
+
 ### 大佬笔记
 
 https://halfrost.com/go_channel/
@@ -136,6 +138,108 @@ G1交接收到的数据直接写入到recv的内存地址
 7. CSP 1978 中描述的编程语言对程序终止性的讨论几乎为零
 8. 此时与 Actor 模型进行比较，CSP 与 Actor 均在实体间直接通信，区别在于 Actor 支持异步消息通信，而 CSP 1978 是同步通信
 
+#### struct hchan
+
+channel 的底层源码和相关实现在 src/runtime/chan.go 中。
+
+```go
+type hchan struct {
+	qcount   uint           // 队列中所有数据总数
+	dataqsiz uint           // 环形队列的 size
+	buf      unsafe.Pointer // 指向 dataqsiz 长度的数组
+	elemsize uint16         // 元素大小
+	closed   uint32
+	elemtype *_type         // 元素类型
+	sendx    uint           // 已发送的元素在环形队列中的位置
+	recvx    uint           // 已接收的元素在环形队列中的位置
+	recvq    waitq          // 接收者的等待队列
+	sendq    waitq          // 发送者的等待队列
+
+	lock mutex
+}
+
+// 排他锁
+// Mutual exclusion locks.  In the uncontended case,
+// as fast as spin locks (just a few user-level instructions),
+// but on the contention path they sleep in the kernel.
+// A zeroed Mutex is unlocked (no need to initialize each lock).
+// Initialization is helpful for static lock ranking, but not required.
+type mutex struct {
+	// Empty struct if lock ranking is disabled, otherwise includes the lock rank
+	lockRankStruct
+	// Futex-based impl treats it as uint32 key,
+	// while sema-based impl as M* waitm.
+	// Used to be a union, but unions break precise GC.
+	key uintptr
+}
+```
+
+lock 锁保护 hchan 中的所有字段，以及此通道上被阻塞的 sudogs 中的多个字段。持有 lock 的时候，禁止更改另一个 G 的状态（特别是不要使 G 状态变成ready），因为这会因为堆栈 shrinking 而发生死锁。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/channel-hchan-struct.png)
+
+recvq 和 sendq 是等待队列，waitq 是一个双向链表：
+
+```go
+type waitq struct {
+	first *sudog
+	last  *sudog
+}
+```
+
+end
+
+#### sudog
+
+channel 最核心的数据结构是 sudog。
+
+sudog看goroutine那个笔记吧。
+
+### channel lock:feet:
+
+**Each channel internally holds a mutex lock which is used to avoid data races in all kinds of operations.**
+
+The following will make more explanations for the four cases shown with superscripts (A, B, C and D).
+
+To better understand channel types and values, and to make some explanations easier, looking in the raw internal structures of internal channel objects is very helpful.
+
+We can think of each channel consisting of three queues (all can be viewed as FIFO queues) internally:
+
+1. the receiving goroutine queue (generally FIFO). The queue is a linked list without size limitation. Goroutines in this queue are all in blocking state and waiting to receive values from that channel.
+2. the sending goroutine queue (generally FIFO). The queue is also a linked list without size limitation. Goroutines in this queue are all in blocking state and waiting to send values to that channel. The value (or the address of the value, depending on compiler implementation) each goroutine is trying to send is also stored in the queue along with that goroutine.
+3. the value buffer queue (absolutely FIFO). This is a circular queue. Its size is equal to the capacity of the channel. The types of the values stored in this buffer queue are all the element type of that channel. If the current number of values stored in the value buffer queue of the channel reaches the capacity of the channel, the channel is called in full status. If no values are stored in the value buffer queue of the channel currently, the channel is called in empty status. For a zero-capacity (unbuffered) channel, it is always in both full and empty status.
+
+Each channel internally holds a mutex lock which is used to avoid data races in all kinds of operations.
+
+**Channel operation case A**: when a goroutine `R` tries to receive a value from a not-closed non-nil channel
+
+, **the goroutine `R` will acquire the lock associated with the channel firstly**, then do the following steps until one condition is satisfied.
+
+1. If the value buffer queue of the channel is not empty, in which case the receiving goroutine queue of the channel must be empty, the goroutine `R` will receive (by shifting) a value from the value buffer queue. If the sending goroutine queue of the channel is also not empty, a sending goroutine will be shifted out of the sending goroutine queue and resumed to running state again. The value that the just shifted sending goroutine is trying to send will be pushed into the value buffer queue of the channel. The receiving goroutine `R` continues running. For this scenario, the channel receive operation is called a **non-blocking operation**.
+2. Otherwise (the value buffer queue of the channel is empty), if the sending goroutine queue of the channel is not empty, in which case the channel must be an unbuffered channel, the receiving goroutine `R` will shift a sending goroutine from the sending goroutine queue of the channel and receive the value that the just shifted sending goroutine is trying to send. The just shifted sending goroutine will get unblocked and resumed to running state again. The receiving goroutine `R` continues running. For this scenario, the channel receive operation is called a **non-blocking operation**.
+3. If value buffer queue and the sending goroutine queue of the channel are both empty, the goroutine `R` will be pushed into the receiving goroutine queue of the channel and enter (and stay in) blocking state. It may be resumed to running state when another goroutine sends a value to the channel later. For this scenario, the channel receive operation is called a **blocking operation**.
+
+**Channel rule case B**: when a goroutine `S` tries to send a value to a not-closed non-nil channel
+
+, the goroutine `S` will acquire the lock associated with the channel firstly, then do the following steps until one step condition is satisfied.
+
+1. If the receiving goroutine queue of the channel is not empty, in which case the value buffer queue of the channel must be empty, the sending goroutine `S` will shift a receiving goroutine from the receiving goroutine queue of the channel and send the value to the just shifted receiving goroutine. The just shifted receiving goroutine will get unblocked and resumed to running state again. The sending goroutine `S` continues running. For this scenario, the channel send operation is called a **non-blocking operation**.
+2. Otherwise (the receiving goroutine queue is empty), if the value buffer queue of the channel is not full, in which case the sending goroutine queue must be also empty, the value the sending goroutine `S` trying to send will be pushed into the value buffer queue, and the sending goroutine `S` continues running. For this scenario, the channel send operation is called a **non-blocking operation**.
+3. If the receiving goroutine queue is empty and the value buffer queue of the channel is already full, the sending goroutine `S` will be pushed into the sending goroutine queue of the channel and enter (and stay in) blocking state. It may be resumed to running state when another goroutine receives a value from the channel later. For this scenario, the channel send operation is called a **blocking operation**.
+
+Above has mentioned, once a non-nil channel is closed, sending a value to the channel will produce a runtime panic in the current goroutine. Note, sending data to a closed channel is viewed as a **non-blocking operation**.
+
+**Channel operation case C**: when a goroutine tries to close a not-closed non-nil channel
+
+, once the goroutine has acquired the lock of the channel, both of the following two steps will be performed by the following order.
+
+1. If the receiving goroutine queue of the channel is not empty, in which case the value buffer of the channel must be empty, all the goroutines in the receiving goroutine queue of the channel will be shifted one by one, each of them will receive a zero value of the element type of the channel and be resumed to running state.
+2. If the sending goroutine queue of the channel is not empty, all the goroutines in the sending goroutine queue of the channel will be shifted one by one and each of them will produce a panic for sending on a closed channel. This is the reason why we should avoid concurrent send and close operations on the same channel. In fact, when [the go command's data race detector option](https://golang.org/doc/articles/race_detector.html) (`-race`) is enabled, concurrent send and close operation cases might be detected at run time and a runtime panic will be thrown.
+
+Note: after a channel is closed, the values which have been already pushed into the value buffer of the channel are still there. Please read the closely following explanations for case D for details.
+
+**Channel operation case D**: after a non-nil channel is closed, channel receive operations on the channel will never block. The values in the value buffer of the channel can still be received. The accompanying second optional bool return values are still `true`. Once all the values in the value buffer are taken out and received, infinite zero values of the element type of the channel will be received by any of the following receive operations on the channel. As mentioned above, the optional second return result of a channel receive operation is an untyped boolean value which indicates whether or not the first result (the received value) is sent before the channel is closed. If the second return result is `false`, then the first return result (the received value) must be a zero value of the element type of the channel.
+
 ### sync and channel
 
 Go 中的并发原语主要分为 2 大类，一个是 sync 包里面的，另一个是 channel。sync 包里面主要是 WaitGroup，互斥锁和读写锁，cond，once，sync.Pool 这一类。
@@ -176,7 +280,9 @@ func Add(x int) {
 
 sum 这个结构体不想将内部的变量暴露在结构体之外，所以使用 sync.Mutex 来保护线程安全。
 
-#### channel应用场景
+#### channel应用场景: 并发本质？
+
+多个goroutines时，一个goroutine使用channel时会lock。
 
 channel 也有 2 种情况：
 
@@ -185,13 +291,13 @@ channel 也有 2 种情况：
 
 输出数据给其他使用方的目的是转移数据的使用权。并发安全的实质是保证同时只有一个并发上下文拥有数据的所有权。channel 可以很方便的将数据所有权转给其他使用方。另一个优势是组合型。如果使用 sync 里面的锁，想实现组合多个逻辑并且保证并发安全，是比较困难的。但是使用 channel + select 实现组合逻辑实在太方便了。
 
+
+
 ### channel发送数据:+1:
 
 #### send异常检查
 
 chansend() 函数一开始先进行异常检查：
-
-Go
 
 ```go
 func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
@@ -225,6 +331,10 @@ chansend() 一上来对 channel 进行检查，如果被 GC 回收了会变为 n
 当 channel 不为 nil，并且 channel 没有 close 时，还需要检查此时 channel 是否做好发送的准备，即判断 full(c)
 
 ```go
+// full reports whether a send on c would block (that is, the channel is full).
+// It uses a single word-sized read of mutable state, so although
+// the answer is instantaneously true, the correct answer may have changed
+// by the time the calling function receives the return value.
 func full(c *hchan) bool {
 	if c.dataqsiz == 0 {
 		// 假设指针读取是近似原子性的
@@ -235,7 +345,11 @@ func full(c *hchan) bool {
 }
 ```
 
-full() 方法作用是判断在 channel 上发送是否会阻塞（即通道已满）。它读取单个字节大小的可变状态(recvq.first 和 qcount)，尽管答案可能在一瞬间是 true，但在调用函数收到返回值时，正确的结果可能发生了更改。值得注意的是 dataqsiz 字段，它在创建完 channel 以后是不可变的，因此它可以安全的在任意时刻读取。
+full() 方法作用是判断在 channel 上发送是否会阻塞（即通道已满）。它读取单个字节大小的可变状态(recvq.first 和 qcount)，尽管答案可能在一瞬间是 true，但在调用函数收到返回值时，正确的结果可能发生了更改即它刚检测到chan is full，其他goroutine又从chan读取了一个数据，此时chan is not full，需要等待下次检测。值得注意的是 dataqsiz 字段，它在创建完 channel 以后是不可变的，因此它可以安全的在任意时刻读取。
+
+> 那么多个goroutine对一个channel写数据，肯定存在g_1刚检测channel不满，准备发数据，此时G_2抢先一步写入数据，G_1将何去何从？
+>
+> 真正发送前应该再检查一下吧--
 
 回到 chansend() 异常检查中。一个已经 close 的 channel 是不可能从“准备发送”的状态变为“未准备好发送”的状态。所以在检查完 channel 是否 close 以后，就算 channel close 了，也不影响此处检查的结果。可能有读者疑惑，“能不能把检查顺序倒一倒？先检查是否 full()，再检查是否 close？”。这样倒过来确实能保证检查 full() 的时候，channel 没有 close。但是这种做法也没有实质性的改变。channel 依旧可以在检查完 close 以后再关闭。其实我们依赖的是 chanrecv() 和 closechan() 这两个方法在锁释放后，它们更新这个线程 c.close 和 full() 的结果视图。
 
@@ -246,15 +360,41 @@ channel 异常状态检查以后，接下来的代码是发送的逻辑
 ```go
 func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 ......
+    // Fast path: check for failed non-blocking operation without acquiring the lock.
+	//
+	// After observing that the channel is not closed, we observe that the channel is
+	// not ready for sending. Each of these observations is a single word-sized read
+	// (first c.closed and second full()).
+	// Because a closed channel cannot transition from 'ready for sending' to
+	// 'not ready for sending', even if the channel is closed between the two observations,
+	// they imply a moment between the two when the channel was both not yet closed
+	// and not ready for sending. We behave as if we observed the channel at that moment,
+	// and report that the send cannot proceed.
+	//
+	// It is okay if the reads are reordered here: if we observe that the channel is not
+	// ready for sending and then observe that it is not closed, that implies that the
+	// channel wasn't closed during the first observation. However, nothing here
+	// guarantees forward progress. We rely on the side effects of lock release in
+	// chanrecv() and closechan() to update this thread's view of c.closed and full().
+    if !block && c.closed == 0 && full(c) {
+		return false
+	}
+
+	var t0 int64
+	if blockprofilerate > 0 {
+		t0 = cputicks()
+	}
 
 	lock(&c.lock)
-
+	// 如果channel 关闭
 	if c.closed != 0 {
 		unlock(&c.lock)
 		panic(plainError("send on closed channel"))
 	}
 
 	if sg := c.recvq.dequeue(); sg != nil {
+		// Found a waiting receiver. We pass the value we want to send
+		// directly to the receiver, bypassing the channel buffer (if any).
 		send(c, sg, ep, func() { unlock(&c.lock) }, 3)
 		return true
 	}
@@ -267,6 +407,12 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 在发送之前，先上锁，保证线程安全。并再一次检查 channel 是否关闭。如果关闭则抛出 panic。加锁成功并且 channel 未关闭，开始发送。如果有正在阻塞等待的接收方，通过 dequeue() 取出头部第一个非空的 sudog，调用 send() 函数:
 
 ```go
+// send processes a send operation on an empty channel c.
+// The value ep sent by the sender is copied to the receiver sg.
+// The receiver is then woken up to go on its merry way.
+// Channel c must be empty and locked.  send unlocks c with unlockf.
+// sg must already be dequeued from c.
+// ep must be non-nil and point to the heap or the caller's stack.
 func send(c *hchan, sg *sudog, ep unsafe.Pointer, unlockf func(), skip int) {
 	if sg.elem != nil {
 		sendDirect(c.elemtype, sg, ep)
@@ -472,6 +618,12 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 同 chansend 逻辑类似，检查完异常情况，紧接着是同步接收。
 
 ```go
+// chanrecv receives on channel c and writes the received data to ep.
+// ep may be nil, in which case received data is ignored.
+// If block == false and no elements are available, returns (false, false).
+// Otherwise, if c is closed, zeros *ep and returns (true, false).
+// Otherwise, fills in *ep with an element and returns (true, true).
+// A non-nil ep must point to the heap or the caller's stack.
 func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool) {
 ......
 
@@ -485,6 +637,19 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 在 channel 的发送队列中找到了等待发送的 goroutine。取出队头等待的 goroutine。如果缓冲区的大小为 0，则直接从发送方接收值。否则，对应缓冲区满的情况，从队列的头部接收数据，发送者的值添加到队列的末尾（此时队列已满，因此两者都映射到缓冲区中的同一个下标）。同步接收的核心逻辑见下面 recv() 函数：
 
 ```go
+// recv processes a receive operation on a full channel c.
+// There are 2 parts:
+// 1) The value sent by the sender sg is put into the channel
+//    and the sender is woken up to go on its merry way.
+// 2) The value received by the receiver (the current G) is
+//    written to ep.
+// For synchronous channels, both values are the same.
+// For asynchronous channels, the receiver gets its data from
+// the channel buffer and the sender's data is put in the
+// channel buffer.
+// Channel c must be full and locked. recv unlocks c with unlockf.
+// sg must already be dequeued from c.
+// A non-nil ep must point to the heap or the caller's stack.
 func recv(c *hchan, sg *sudog, ep unsafe.Pointer, unlockf func(), skip int) {
 	if c.dataqsiz == 0 {
 		if raceenabled {
@@ -1011,3 +1176,4 @@ https://learnku.com/go/t/23459/how-to-close-the-channel-gracefully
 4. https://zhuanlan.zhihu.com/p/313763247
 5. https://learnku.com/go/t/23459/how-to-close-the-channel-gracefully
 6. https://blog.csdn.net/chushoufengli/article/details/114966927
+7. https://go101.org/article/channel.html

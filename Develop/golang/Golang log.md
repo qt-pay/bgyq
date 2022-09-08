@@ -55,3 +55,60 @@ Now time: 2022-06-17 12:29:53
 ```
 
 刚好是 1 2 3 4 5 6 7，据此进行变化即可。
+
+### log demo
+
+#### error log要全面
+
+如下，一个服务启动报错，根据service找到它的启动命令，然后手动执行可以看到详细的报错
+
+`Failed to parse configuration.Error msg 1 error(s) decoding:`错误提示很明显，该服务的配置文件启动上解析失败、
+
+> Linux message文件也有记录
+
+```bash
+$ systemctl status test-agent.service 
+● test-agent.service - UNI test Agent Daemon
+   Loaded: loaded (/usr/lib/systemd/system/test-agent.service; enabled; vendor preset: disabled)
+   Active: failed (Result: start-limit) since Wed 2022-09-07 15:52:31 CST; 7min ago
+  Process: 16252 ExecStart=/bin/bash -c -l /usr/local/bin/test-agent (code=exited, status=1/FAILURE)
+....
+
+
+$ /bin/bash -c -l /usr/local/bin/test-agent
+Failed to parse configuration.Error msg 1 error(s) decoding:
+
+* 'ScsiIps[scsi2][0]' expected type 'string', got unconvertible type '[]interface {}'
+test-agent/common/config.InitConfig
+        /root/rpmbuild/BUILD/test-agent-release/common/config/config.go:114
+main.main
+        /root/rpmbuild/BUILD/test-agent-release/cmd/main.go:501
+runtime.main
+        /usr/local/go/src/runtime/proc.go:203
+runtime.goexit
+        /usr/local/go/src/runtime/asm_amd64.s:1357
+
+
+$ cat /var/lib/message 
+...
+
+Sep  7 15:52:29 testnode systemd: Configuration file /usr/lib/systemd/system/network-audit-agent.service is marked executable. Please remove executable permission bits. Proceeding anyway.
+Sep  7 15:52:29 testnode bash: Failed to parse configuration.Error msg 1 error(s) decoding:
+Sep  7 15:52:29 testnode bash: * 'ScsiIps[scsi2][0]' expected type 'string', got unconvertible type '[]interface {}'
+Sep  7 15:52:29 testnode bash: test-agent/common/config.InitConfig
+Sep  7 15:52:29 testnode bash: /root/rpmbuild/BUILD/test-agent-release/common/config/config.go:114
+Sep  7 15:52:29 testnode bash: main.main
+Sep  7 15:52:29 testnode bash: /root/rpmbuild/BUILD/test-agent-release/cmd/main.go:501
+Sep  7 15:52:29 testnode bash: runtime.main
+Sep  7 15:52:29 testnode bash: /usr/local/go/src/runtime/proc.go:203
+Sep  7 15:52:29 testnode bash: runtime.goexit
+Sep  7 15:52:29 testnode bash: /usr/local/go/src/runtime/asm_amd64.s:1357
+Sep  7 15:52:29 testnode systemd: test-agent.service: main process exited, code=exited, status=1/FAILURE
+Sep  7 15:52:29 testnode systemd: Unit test-agent.service entered failed state.
+Sep  7 15:52:29 testnode systemd: test-agent.service failed.
+Sep  7 15:52:30 testnode systemd: test-agent.service holdoff time over, scheduling restart.
+Sep  7 15:52:30 testnode systemd: Stopped UNI test Agent Daemon.
+Sep  7 15:52:30 testnode systemd: Started UNI test Agent Daemon
+```
+
+end

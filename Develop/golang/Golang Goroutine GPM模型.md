@@ -261,40 +261,6 @@ G2 读取完channle数据，也被gopark设置为waiting
 
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/goroutine-waiting-recv.jpg)
 
-#### struct hchan
-
-channel 的底层源码和相关实现在 src/runtime/chan.go 中。
-
-```go
-type hchan struct {
-	qcount   uint           // 队列中所有数据总数
-	dataqsiz uint           // 环形队列的 size
-	buf      unsafe.Pointer // 指向 dataqsiz 长度的数组
-	elemsize uint16         // 元素大小
-	closed   uint32
-	elemtype *_type         // 元素类型
-	sendx    uint           // 已发送的元素在环形队列中的位置
-	recvx    uint           // 已接收的元素在环形队列中的位置
-	recvq    waitq          // 接收者的等待队列
-	sendq    waitq          // 发送者的等待队列
-
-	lock mutex
-}
-```
-
-lock 锁保护 hchan 中的所有字段，以及此通道上被阻塞的 sudogs 中的多个字段。持有 lock 的时候，禁止更改另一个 G 的状态（特别是不要使 G 状态变成ready），因为这会因为堆栈 shrinking 而发生死锁。
-
-![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/channel-hchan-struct.png)
-
-recvq 和 sendq 是等待队列，waitq 是一个双向链表：
-
-```go
-type waitq struct {
-	first *sudog
-	last  *sudog
-}
-```
-
 
 
 ### sudog:没看懂
@@ -332,9 +298,17 @@ type sudog struct {
 }
 ```
 
+该结构中主要的就是一个g和一个elem。elem用于存储goroutine的数据。读通道时，数据会从Hchan的队列中拷贝到SudoG的elem域。写通道时，数据则是由SudoG的elem域拷贝到Hchan的队列中。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/channel-sudog-struct.png)
+
+
+
 sudog 中所有字段都受 hchan.lock 保护。acquiretime、releasetime、ticket 这三个字段永远不会被同时访问。对 channel 来说，waitlink 只由 g 使用。对 semaphores 来说，只有在持有 semaRoot 锁的时候才能访问这三个字段。isSelect 表示 g 是否被选择，g.selectDone 必须进行 CAS 才能在被唤醒的竞争中胜出。success 表示 channel c 上的通信是否成功。如果 goroutine 在 channel c 上传了一个值而被唤醒，则为 true；如果因为 c 关闭而被唤醒，则为 false。
 
 > CAS,compare and swap,一种无锁算法。
+
+
 
 **sudog 的二级缓存复用体系**。在 acquireSudog() 方法中：
 
@@ -503,4 +477,5 @@ send on a full channel
 2. https://www.youtube.com/watch?v=KBZlN0izeiY&ab_channel=GopherAcademy
 3. https://zhuanlan.zhihu.com/p/27917262
 4. https://halfrost.com/go_channel/
+5. https://tiancaiamao.gitbooks.io/go-internals/content/zh/07.1.html
 

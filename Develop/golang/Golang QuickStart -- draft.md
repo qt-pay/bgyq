@@ -58,6 +58,8 @@ Go code must be kept inside a workspace. A workspace is a directory hierarchy wi
 
 ### package names：package unit
 
+同一个package下的任何数据都可以被直接引用，包括小写的Struct和func。
+
 The first statement in a Go source file must be
 
 ```go
@@ -1490,6 +1492,44 @@ map[data:[map[] map[age:20 gender:female]] name:Robin]
 
 end
 
+##### map并发不安全
+
+map不是并发安全的 , 当有多个并发的groutine读写同一个map时 
+
+会出现panic错误:
+
+fatal error: concurrent map writes
+
+```go
+package main
+
+import "fmt"
+
+func main(){
+	for  {
+		test()
+	}
+}
+
+func test() {
+	c := make(chan bool)
+	m := make(map[string]string)
+	go func() {
+		m["1"] = "a" // First conflicting access.
+		c <- true
+	}()
+	m["1"] = "b" // Second conflicting access.
+	<-c
+	for k, v := range m {
+		fmt.Println(k, v)
+	}
+}
+```
+
+解决方法：
+
+
+
 ##### map应用demo
 
 要求：将N个字符串平均分成三份或者引申将100个主机分散到三个云平台可用区。
@@ -2625,6 +2665,8 @@ type rune = int32
 
 #### struct：值类型
 
+Struct Name自身小写也不能其他package被导入使用。
+
 一个自定义的数据类型，就是一个结构体（等同于自定义int、string、float等数据类型）；创建、引用对象和值类型的基本数据类型一致。
 
 ```go
@@ -2638,8 +2680,6 @@ test := Test{"name":"Robin",}
 mapTest := make(map[string]string)
 mapTest["Name"]="Robin"
 ```
-
-
 
 声明定义结构体，要注意：
 
@@ -2694,7 +2734,7 @@ struct的属性是否被导出，也遵循大小写的原则：首字母大写�
 
 但并非绝对如此，**如果struct嵌套了，那么即使被嵌套在内部的struct名称首字母小写，也能访问到它里面首字母大写的字段**。
 
-
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/golang同package可以直接引用.jpg)
 
 
 #### interface
@@ -2736,6 +2776,95 @@ func main()  {
 ```
 
 end
+
+### select随机性
+
+Execution of a "select" statement proceeds in several steps:
+
+1. ...
+2. If one or more of the communications can proceed, a single one that can proceed is chosen via a uniform pseudo-random selection. Otherwise, if there is a default case, that case is chosen. If there is no default case, the "select" statement blocks until at least one of the communications can proceed.
+3. ...
+
+确实是随机的，但是随机逻辑还没研究。
+
+```go
+package main
+
+import "fmt"
+
+func main()  {
+	for  {
+		testSelect()
+	}
+}
+
+func testSelect()  {
+	chOne := make(chan string, 1)
+	chTwo := make(chan string, 1)
+	chThree := make(chan string, 1)
+
+	chOne <- "1"
+	chTwo <- "2"
+	chThree <- "3"
+	
+	select {
+	case <-chOne:
+		fmt.Println("One")
+	case <-chTwo:
+		fmt.Println("Two")
+	case <-chThree:
+		fmt.Println("Three")
+	default:
+		fmt.Println("default")
+	}
+}
+// output
+Two
+One
+Two
+Three
+Two
+Two
+One
+One
+```
+
+#### 实现原理
+
+case也是一个channel？
+
+```go
+// Select case descriptor.
+// Known to compiler.
+// Changes here must also be made in src/cmd/compile/internal/walk/select.go's scasetype.
+type scase struct {
+	c    *hchan         // chan
+	elem unsafe.Pointer // data element
+}
+```
+
+源码包`src/runtime/select.go:selectgo()`定义了select选择case的函数：
+
+也是依赖sudog...
+
+```go
+// 伪代码
+func selectgo(cas0 *scase, order0 *uint16, ncases int) (int, bool) {
+    //1. 锁定scase语句中所有的channel
+    //2. 按照随机顺序检测scase中的channel是否ready
+    //   2.1 如果case可读，则读取channel中数据，解锁所有的channel，然后返回(case index, true)
+    //   2.2 如果case可写，则将数据写入channel，解锁所有的channel，然后返回(case index, false)
+    //   2.3 所有case都未ready，则解锁所有的channel，然后返回（default index, false）
+    //3. 所有case都未ready，且没有default语句
+    //   3.1 将当前协程加入到所有channel的等待队列
+    //   3.2 当将协程转入阻塞，等待被唤醒
+    //4. 唤醒后返回channel对应的case index
+    //   4.1 如果是读操作，解锁所有的channel，然后返回(case index, true)
+    //   4.2 如果是写操作，解锁所有的channel，然后返回(case index, false)
+}
+```
+
+对于读channel的case来说，如`case elem, ok := <-chan1:`, 如果channel有可能被其他协程关闭的情况下，一定要检测读取是否成功，因为close的channel也有可能返回，此时ok == false。
 
 ### Json序列化
 
@@ -3204,3 +3333,5 @@ end
 9. https://www.imooc.com/article/261217
 10. https://learnku.com/docs/bettercoding/1.0/structure-label/6968#52a4a5
 11. https://cloud.tencent.com/developer/article/1200349
+12. https://www.jianshu.com/p/eb539203a982
+13. https://www.cnblogs.com/wuyepeng/p/13910678.html

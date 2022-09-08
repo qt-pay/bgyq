@@ -281,6 +281,50 @@ goroutine操作里面使用 running = 0的修改变量，其实也可以达到�
 
 程序中多个 goroutine 同时访问某个数据，必须保证**串行化**访问。即需要增加同步逻辑，可以使用 sync 或者 sync/atomic中的锁或原子类型来保证。另外，题主还可以尝试用 channel 来实现这个同步逻辑。
 
+#### 这都data race？
+
+```go
+func main() {
+	c := make(chan bool)
+	m := make(map[string]string)
+	go func() {
+		m["1"] = "a" // First conflicting access.
+		c <- true
+	}()
+	m["2"] = "b" // Second conflicting access.
+	<-c
+	for k, v := range m {
+		fmt.Println(k, v)
+	}
+}
+
+// ？？？
+root@e8f0cd70b274:/go# go run -race /data/golang_code/dr.go
+==================
+WARNING: DATA RACE
+Write at 0x00c00009c150 by goroutine 7:
+  runtime.mapassign_faststr()
+      /usr/local/go/src/runtime/map_faststr.go:202 +0x0
+  main.main.func1()
+      /data/golang_code/dr.go:7 +0x50
+
+Previous write at 0x00c00009c150 by main goroutine:
+  runtime.mapassign_faststr()
+      /usr/local/go/src/runtime/map_faststr.go:202 +0x0
+  main.main()
+      /data/golang_code/dr.go:10 +0x131
+
+Goroutine 7 (running) created at:
+  main.main()
+      /data/golang_code/dr.go:6 +0x114
+==================
+1 a
+2 b
+Found 1 data race(s)
+exit status 66
+
+```
+
 
 
 ### 引用
