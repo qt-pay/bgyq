@@ -78,35 +78,6 @@ native float32 assertion: 100
 
 https://www.ruanyifeng.com/blog/2010/06/ieee_floating-point_representation.html
 
-#### float精度和有效位
-
-精度主要取决于尾数部分的位数。
-
-对于 float32（单精度）来说，表示尾数的为23位，除去全部为0的情况以外，最小为2^-23，约等于1.19*10^-7，所以float小数部分只能精确到后面6位，加上小数点前的一位，即有效数字为7位。
-
-同理 float64（单精度）的尾数部分为 52位，最小为2^-52，约为2.22*10^-16，所以精确到小数点后15位，加上小数点前的一位，有效位数为16位。
-
-**float32**，也即我们常说的单精度，存储占用4个字节，也即4*8=32位，其中1位用来符号，8位用来指数，剩下的23位表示尾数
-
-![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/float32.webp)
-
-
-
-**float64**，也即我们熟悉的双精度，存储占用8个字节，也即8*8=64位，其中1位用来符号，11位用来指数，剩下的52位表示尾数
-
-![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/float64.webp)
-
-#### 科学计数法
-
-浮点数类型的取值范围可以从很微小到很巨大。浮点数取值范围的极限值可以在 math 包中找到：
-
-- 常量 math.MaxFloat32 表示 float32 能取到的最大数值，大约是 3.4e38；
-- 常量 math.MaxFloat64 表示 float64 能取到的最大数值，大约是 1.8e308；
-- float32 和 float64 能表示的最小值分别为 1.4e-45 和 4.9e-324。
-
-
-所以，`1.4e-43`就是`1.4e-45 * 10 * 10`,  因为`i`初始化值为10
-
 
 
 ### uintptr：运算指针
@@ -128,6 +99,101 @@ func main()  {
 将数组 `arr` 的内存地址赋值给指针 `ap`，然后通过 `unsafe.Pointer` 这个桥梁转化为 `uintptr` 类型，再加上数组元素偏移量（通过 `unsafe.Sizeof` 函数获取），就可以得到该数组第二个元素的内存地址，最后通过 `unsafe.Pointer` 将其转化为 `int` 类型指针赋值给 `sp` 指针，并进行修改，最终打印的结果是：`[1 5 3]`
 
 这样一来，就可以绕过 Go 指针的安全限制，实现对指针的动态偏移和计算了，这会导致即使发生数组越界了，也不会报错，而是返回下一个内存地址存储的值，这就破坏了内存安全限制，所以这也是不安全的操作，我们在实际编码时要尽量避免使用，必须使用的话也要非常谨慎。
+
+
+
+### nil pointer dereference
+
+nil 最好不要作为参数传给函数--
+
+```go
+func main(){
+	var n *int
+	*n = 4
+}
+
+// panic: runtime error: invalid memory address or nil pointer dereference
+n 刚初始化的值是<nil>，无法被访问
+// 校正
+func main(){
+	var n *int
+	fmt.Println(n)
+	num := 3
+	n = &num
+	fmt.Println(*n)
+
+}
+// output
+<nil>
+3
+```
+
+#### 指针和指向指针的指针
+
+通常指针做形参，是不是不应该直接修改形参的指向，而是应该只修改指针指向的内容。
+
+```go
+func main(){
+	var test *int	
+	go testNum(test)
+	fmt.Println("main goroutine waiting goroutine flush")
+	time.Sleep(8  * time.Second)
+	fmt.Println("main goroutine test addr",test)
+	fmt.Println("main goroutine test value",*test)
+
+	time.Sleep(3 * time.Second)
+
+}
+
+func testNum(n *int){
+	fmt.Println("goroutine origin n", n)
+	num := 5
+    // 这里n替换了原来执行的指针，即此时n已经不指向main中的test了
+	n = &num
+	fmt.Println("goroutine init n", n)
+	fmt.Println("goroutine change n value to ", *n)
+	time.Sleep(4 * time.Second)
+}
+
+// output 
+main goroutine waiting goroutine flush
+goroutine origin n <nil>
+goroutine init n 0xc00008c000
+goroutine change n value to  5
+// test 仅初始化声明了，没有赋值所以为<nil>
+main goroutine test addr <nil>
+panic: runtime error: invalid memory address or nil pointer dereference
+```
+
+修正版
+
+```go
+var test *int
+func main(){
+
+	go testNum(test)
+	fmt.Println("main goroutine waiting goroutine flush")
+	time.Sleep(8  * time.Second)
+	fmt.Println("main goroutine test addr",test)
+	fmt.Println("main goroutine test value",*test)
+
+	time.Sleep(3 * time.Second)
+
+}
+
+func testNum(n *int){
+	fmt.Println("goroutine origin n", n)
+	num := 5
+	n = &num
+    // 或者不要形参n，直接给全局变量test赋值
+	test = n
+	fmt.Println("goroutine init n", n)
+	fmt.Println("goroutine change n value to ", *n)
+	time.Sleep(4 * time.Second)
+}
+```
+
+end
 
 ### 引用
 

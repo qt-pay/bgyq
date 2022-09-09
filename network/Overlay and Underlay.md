@@ -133,6 +133,8 @@ Intel提出来SR-IOV这个东西。SR-IOV最初应用在网卡上。简单的说
 
 ##### 混合Overlay路由同步：frr
 
+通常，混合Overlay则需要主机Overlay angent对网络leaf设备的做相应的优化，提升vxlan的识别和信息传输。
+
 假设基于OVS实现的vSwitch，作为Leaf，与物理Spine组网。
 
 N个运行OVS的宿主机都是请求彼此ovs vswtich上的vms路由信息的，但是有些基于物理Leaf设备的路由，天然和ovs vswitch信息不同的。

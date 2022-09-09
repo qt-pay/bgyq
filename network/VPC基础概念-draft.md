@@ -462,6 +462,12 @@ CVK 1 和 CVK 2 在VPC 1
 
 eg：一个虚拟机vm从一个接在网络Overlay上的宿主机上，转移到一个主机Overlay宿主机上了。那么，VPC下Router的信息就要更新把之前指向vm的明细路由删掉，转换成执行某个vSwitch的路由。
 
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vpv-sdn-agent-demo.jpg)
+
+需要优化点
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vpn-sdn-agent-优化.jpg)
+
 #### 流量模型有点不合理
 
 该流量模型设计的一个前提：当host上有一个vm时，会感知到该vm 所在subnet的全部拓扑信息。
