@@ -1069,6 +1069,128 @@ panic: reflect.Value.Interface: cannot return value obtained from unexported fie
 
 end
 
+#### Indirect(v).Type() and TypeOf()
+
+```go
+func main {
+    uu := User{"tom", 27, "beijing"}
+	u := &uu
+	v := reflect.ValueOf(u)
+	fmt.Println("ValueOf=", v)
+ 
+	t := reflect.TypeOf(u)
+	fmt.Println("TypeOf=", t)
+ 
+	t1 := reflect.Indirect(v).Type()
+	fmt.Println("t1=", t1)
+}
+
+// output
+ValueOf= &{tom 27 beijing}
+TypeOf= *main.User
+t1= main.User
+
+
+// Indirect returns the value that v points to.
+// If v is a nil pointer, Indirect returns a zero Value.
+// If v is not a pointer, Indirect returns v.
+func Indirect(v Value) Value {
+	if v.Kind() != Ptr {
+		return v
+	}
+	return v.Elem()
+}
+```
+
+TypeOf只是返回了变量的类型，而reflect.Indirect(v).Type()则能返回了指针所指向的变量的类型。
+
+#### 应用:mushroom::动态修改未知输入数据,全文背诵
+
+假设有一个配置类 Config，每个字段是一个配置项。为了简化实现，假设字段均为 string 类型：
+
+```go
+type Config struct {
+	Name    string `json:"server-name"`
+	IP      string `json:"server-ip"`
+	URL     string `json:"server-url"`
+	Timeout string `json:"timeout"`
+}
+```
+
+配置默认从 `json` 文件中读取，如果环境变量中设置了某个配置项，则以环境变量中的配置为准。配置项和环境变量对应的规则非常简单：将 json 字段的字母转为大写，将 `-` 转为下划线，并添加 `CONFIG_` 前缀。
+
+最终对应结果：
+
+```go
+type Config struct {
+	Name    string `json:"server-name"` // CONFIG_SERVER_NAME
+	IP      string `json:"server-ip"`   // CONFIG_SERVER_IP
+	URL     string `json:"server-url"`  // CONFIG_SERVER_URL
+	Timeout string `json:"timeout"`     // CONFIG_TIMEOUT
+}
+```
+
+实现这个功能非常简单，使用 `switch case` 或者 `if else` 硬编码很快就搞定了。但是，如果使用硬编码，`Config` 结构发生改变，例如修改 `json` 对应的字段，删除或新增了一个配置项，这块逻辑也需要发生改变。而更大的问题在于：容易出错，不好测试！！！
+
+这个时候，就有了 reflect 的用武之地了。
+
+```go
+type Config struct {
+	Name    string `json:"server-name"`
+	IP      string `json:"server-ip"`
+	URL     string `json:"server-url"`
+	Timeout string `json:"timeout"`
+}
+
+func readConfig(config Config) *Config {
+	// read from xxx.json，省略
+	typ := reflect.TypeOf(config)
+	value := reflect.Indirect(reflect.ValueOf(&config))
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		if v, ok := f.Tag.Lookup("json"); ok {
+			key := fmt.Sprintf("CONFIG_%s", strings.ReplaceAll(strings.ToUpper(v), "-", "_"))
+			fmt.Println("Env key: ", key)
+			if env, exist := os.LookupEnv(key); exist {
+				value.FieldByName(f.Name).Set(reflect.ValueOf(env))
+			}
+		}
+	}
+	return &config
+}
+
+func main() {
+	os.Setenv("CONFIG_SERVER_NAME", "global_server")
+	config := Config{
+		URL: "www.test.com",
+		Name: "Robin",
+		IP: "1.1.1.1",
+		Timeout: "30s",
+	}
+	c := readConfig(config)
+	fmt.Printf("%+v", c)
+}
+```
+
+实现逻辑其实是非常简单的：
+
+- 在运行时，利用反射获取到 `Config` 的每个字段的 `Tag` 属性，拼接出对应的环境变量的名称。
+- 查看该环境变量是否存在，如果存在，则将环境变量的值赋值给该字段。
+
+运行该程序，输出为：
+
+```go
+Env key:  CONFIG_SERVER_NAME
+Env key:  CONFIG_SERVER_IP
+Env key:  CONFIG_SERVER_URL
+Env key:  CONFIG_TIMEOUT
+&{Name:global_server IP:1.1.1.1 URL:www.test.com Timeout:30s}
+```
+
+可以看到，环境变量中设置的配置项已经生效。之后无论结构体 `Config` 内部的字段发生任何改变，这部分代码无需任何修改即可完美的适配，出错概率也极大地降低。
+
+
+
 ###  高玩，通过反射，调用方法:fire:
 
 #### 核心
@@ -1279,5 +1401,7 @@ https://www.cnblogs.com/CharmCode/p/14315474.html
 
 1. https://www.cnblogs.com/Csir/p/9561488.html
 2. https://juejin.cn/post/7061933166717567012
-2. https://halfrost.com/go_interface/
-2. https://blog.csdn.net/weixin_35792468/article/details/112923590
+3. https://halfrost.com/go_interface/
+4. https://blog.csdn.net/weixin_35792468/article/details/112923590
+5. https://geektutu.com/post/hpg-reflect.html
+6. https://blog.csdn.net/mathieu/article/details/108484135
