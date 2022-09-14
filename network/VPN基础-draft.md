@@ -53,6 +53,42 @@ VPN具有以下两个基本特征：
 
 * L2TP+ipSec ：Layer Two Tunneling Protocol
 
+### VPLS网络
+
+Virtual Private LAN Service (VPLS) delivers a point-to-multipoint L2VPN service over an MPLS or IP backbone. The provider backbone emulates a switch to connect all geographically dispersed sites of each customer network. The backbone is transparent to the customer sites. The sites can communicate with each other as if they were on the same LAN.
+
+VPLS 是基于以太网的点对多点第 2 层 VPN。它允许您通过 MPLS 主干将地理上分散的以太网局域网 （LAN） 站点相互连接。对于实施 VPLS 的客户，尽管流量遍及服务提供商的网络，但所有站点似乎都在同一以太网 LAN 中。
+
+L2 VPN可以避免客户内部路由信息被CE设备学习，更加安全。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vpls-vpn.jpg)
+
+#### 组件介绍
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vpls-部署步骤.jpg)
+
+主要组成部分：
+
+*  CE（Customer Edge，用户网络边缘）设备，直接与服务提供商网络相连的用户网络侧设备。
+* PE（Provider Edge，服务提供商网络边缘）设备，与CE相连的服务提供商网络侧设备。PE主要负责VPN业务的接入，完成报文从用户网络到公网隧道、从公网隧道到用户网络的映射与转发。在分层VPLS组网下，PE可以细分为UPE和NPE。
+* AC（Attachment Circuit，接入电路）连接CE和PE的物理电路或虚拟电路，例如Ethernet接口、VLAN。
+* PW（Pseudowire，伪线）两个PE之间的虚拟双向连接。MPLS PW由一对方向相反的单向LSP构成。
+* 公网隧道（Tunnel）穿越IP或MPLS骨干网、用来承载PW的隧道。一条公网隧道可以承载多条PW，公网隧道可以是LSP、MPLS TE、GRE隧道等。
+* VPLS实例 用户网络可能包括分布在不同地理位置的多个站点。在骨干网上可以利用VPLS技术将这些站点连接起来，为用户提供一个二层VPN。这个二层VPN称为一个VPLS实例。不同VPLS实例中的站点不能二层互通。
+* VSI（Virtual Switch Instance，虚拟交换实例）VSI是PE设备上为一个VPLS实例提供二层交换服务的虚拟实例。VSI可以看作是PE设备上的一台虚拟交换机，它具有传统以太网交换机的所有功能，包括源MAC地址学习、MAC地址老化、泛洪等。VPLS通过VSI实现在VPLS实例内转发二层数据报文。
+
+#### cons
+
+CE接入多个不同PE时，需要配置xSTP，而且面对不同的PE设备（huawei or cisco），可能配置还相同。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vpls-cons-1.png)
+
+收敛慢，evpn可以快速收敛。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vpls-cons-2.jpg)
+
+
+
 ### MPLS VPN：运营商VPN
 
 #### 关键组件
@@ -77,6 +113,15 @@ MPLS全称Multi-Protocol Label Switching，目前来讲运营商网络中MPLS VP
 ### VPN实现分类
 
 #### 建设单位
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vpn运营模式分类-华为.jpg)
+
+  1）、CPE-Based VPN: 设备放置在用户侧(Custom Premise Equipment)
+
+由用户管理或委托运营商进行管理；
+   2）、Network-Based VPN: 设备放置在运营商网络侧
+
+用户设备不需要感知VPN由运营商管理，又称为Provider Provide VPN。
 
 按建设单位分类分为运营商VPN和自建VPN
 
@@ -142,6 +187,7 @@ L7 VPN只能针对应用层数据、比如： chrome访问页面、远程到云�
 
 * GRE：不支持加密和身份认证，通常结合IPSec
 * IPSec：六边形战士，可单独使用
+* MPLS L3 VPN： BGP MPLS VPN
 
 ##### L2VPN
 
@@ -154,9 +200,18 @@ L7 VPN只能针对应用层数据、比如： chrome访问页面、远程到云�
 * L2TP: 主流L2VPN
 
   https://cshihong.github.io/2019/08/21/L2TP-VPN%E5%9F%BA%E6%9C%AC%E5%8E%9F%E7%90%86/
+  
+* MPLS L2 VPN
+
+  包含VLL、VPLS、PWE3。VLL是点到点的业务，可以将整个网络看成一条网线；VPLS是点到多点业务，可将整个网络看成是一个交换机；PWE3是端到端的仿真，其实就是VLL的Martini形式扩展。
+
+### EVPN:popcorn:
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/evpn产生背景.jpg)
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/evpn-组成.jpg)
 
 
-### EVPN
 
 EVPN实现VxLAN控制平面的自动配置。
 
@@ -570,3 +625,13 @@ L3VPN中部署最为广泛的就是MPLS BGP VPN了，MPLS提供公网隧道的�
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/142632z6c8he4zhfvrlsuh.png)
 
 图中，10.1.5.1这一层表示的为报文的IP层；15362这一层表示的是2层VPN标签封装中的内侧标签，实际意义为VPNA的标志；1024与3这一层表示的是2层VPN标签封装中的外层标签，用于PEB到PEA通过P传输时的MPLS标签；报文到达PEA后我们可以得到VPNA的信息与报文的IP信息，这样就可以精确的送达到VPNA网络中的目的地，完成报文的传输。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vpls-部署步骤.jpg)
+
+
+
+### 引用
+
+1. https://bbs.huaweicloud.com/blogs/281600
+2. https://www.bilibili.com/video/BV1Eh411179P/?spm_id_from=333.788.recommend_more_video.-1&vd_source=2795986600b37194ea1056cddb9856fa
+3. 

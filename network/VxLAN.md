@@ -150,9 +150,11 @@ VXLAN 网络架构的组件有：
 
 3. **transit设备/核心设备**：transit设备不参与VXLAN处理，仅需要根据封装后报文的目的IP地址对报文进行三层转发。
 
-##### 逻辑组件:star2:
+##### 逻辑组件:star2:VNI and VSI
 
 1. **VNI(VXLAN Network Identitifier，VXLAN标示符)**：VXLAN 通过VXLAN ID 来标识，其长度为24 比特，VNI是一种类似于VLAN ID的用户标识，一个VNI代表一个租户，属于不同VNI的虚机之间不能直接进行二层通信。
+
+   **Evpn 的vni 叫3层vni ，bd 里的vni 是二层vni 功能不同**
 
 2. **VTEP（VXLAN Tunnel End Point，VXLAN 隧道端点）**：VTEP是VXLAN隧道端点，封装在NVE中，用于VXLAN报文的封装和解封装。**VTEP与物理网络相连，分配有物理网络的IP地址，该地址与虚拟网络无关。说白了，就是VXLAN隧道两端网络可达的IP地址。**VXLAN报文中源IP地址为本节点的VTEP地址，VXLAN报文中目的IP地址为对端节点的VTEP地址，一对VTEP地址就对应着一个VXLAN隧道。
 
@@ -169,7 +171,9 @@ VXLAN 网络架构的组件有：
    vxlan vni 5000  //表示在BD 10下，指定与之关联的VNI为5000
    ```
 
-6. **VSI**：Virtual Switch Instance，虚拟交换实例，VTEP 上为一个 VXLAN 提供二层交换服务的虚拟交换实例。VXLAN ID 和VSI 是一对一的关系，所以每增加一个VXLAN ID的二层网络都要有唯一的VSI实例与之对应。
+6. **VSI**：Virtual Switch Instance，虚拟交换实例，VTEP 上为一个 VXLAN 提供二层交换服务的虚拟交换实例。VXLAN ID 和VSI 是一对一的关系，所以每增加一个VXLAN ID的二层网络都要有唯一的VSI实例与之对应。它具有传统以太网交换机的所有功能，包括源MAC地址学习、MAC地址老化、泛洪等。VSI与VXLAN一一对应。
+
+7.  **VSI-Interface**（VSI的虚拟三层接口）：类似于Vlan-Interface，用来处理跨VNI即跨VXLAN的流量。VSI-Interface与VSI一一对应，在没有跨VNI流量时可以没有VSI-Interface。
 
 #### 控制平面 control plane：MP-BGP EVPN
 
@@ -223,7 +227,7 @@ end
 
 即vm_1 不知道 vm_2的mac信息，需要发起arp 广播，这种时候怎么办呢~
 
-##### 头端负责
+##### 头端复制
 
 假设VM1（所属VNI10099）需要与VM2(所属VNI10099)进行通信。在VM1上进行原始数据报文封装时缺少目标VM2的mac地址信息，于是VM1将向所属局域网发送ARP请求（目标MAC为全F）。TOR1在接收到VM1所发送的ARP请求后。TOR1根据头端复制列表将其转为单播方式，将ARP请求报文复制后并增加VXLAN报头向TOR3以单播方式进行发送，这就是对BUM帧简单的头端复制过程。
 
@@ -438,9 +442,9 @@ vni_ranges = 100:1000
 
 
 
-### 创建vxlan vni
+### vxlan bd L2 vni
 
-华三使用vsi 10 
+华三使用vsi命令
 
 ```bash
 $ system-view
@@ -480,6 +484,10 @@ $ tunnel tunnel-number
 
 end
 
+### vxlan vsi L3 vni
+
+ L3VNI（Layer 3 VNI，三层VXLAN ID）：在网关之间通过VXLAN隧道转发流量时，属于同一路由域、能够进行三层互通的流量通过L3VNI来标识。L3VNI唯一关联一个VPN实例，通过VPN实例确保不同业务之间的隔离。
+
 
 
 ### VxLAN网关:fire:
@@ -494,32 +502,39 @@ L2网关主要解决的就是同一VNI下的VM之间的互访。
 
 VxLAN L2 GW 最关键的技术就是能完成 VLAN 与 VxLAN的映射。所谓 VLAN 与 VxLAN 的映射，指的是这些承担 VxLAN L2 GW 角色的交换机的 AC 口下接入的虚机或者服务器发出的某个 VLAN 的报文进入到的 VxLAN L2 GW 设备后，该设备会通过 VLAN与 VxLAN 的映射，将这个 VLAN 报文封装成对应的 VxLAN 报文，进而完成后续 VxLAN 报文的传递。
 
-```bash
-# 在Switch B上创建VXLAN 10和VXLAN 20。
-[SwitchB] l2vpn enable
-[SwitchB] vsi vpna
-[SwitchB-vsi-vpna] vxlan 10
-[SwitchB-vsi-vpna-vxlan10] quit
-[SwitchB-vsi-vpna] quit
+##### L2 单播
 
-# 在Switch B上将VXLAN隧道Tunnel1与VXLAN 10关联。
-[SwitchB] vsi vpna
-[SwitchB-vsi-vpna] vxlan 10
-[SwitchB-vsi-vpna-vxlan10] tunnel 1
-[SwitchB-vsi-vpna-vxlan10] tunnel 2
-[SwitchB-vsi-vpna-vxlan10] quit
-[SwitchB-vsi-vpna] quit
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan-L2-con-config.png)
 
-# 在接口GigabitEthernet1/0/1上创建以太网服务实例1000，该实例用来匹配VLAN 12（VM 3）的数据帧，将该服务实例与vpna（VXLAN 10）关联。
 
-[SwitchB] interface gigabitethernet 1/0/1
-[SwitchB-GigabitEthernet1/0/1] service-instance 1000
-[SwitchB-GigabitEthernet1/0/1-srv1000] encapsulation s-vid 12
-[SwitchB-GigabitEthernet1/0/1-srv1000] xconnect vsi vpna
-[SwitchB-GigabitEthernet1/0/1-srv1000] quit
-```
 
-end
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan-L2-单播.png)
+
+##### L2 BUM转发：头端复制
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan-L2-bum.jpg)
+
+##### L2 转发模型
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan-L2-转发模型.jpg)
+
+跨ToR转发
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/VLAN-L2-转发模型-2.jpg)
+
+
+
+##### demo
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan-l2-connect.png)
+
+映射VNI模式的Segment VXLAN，数据中心A内部的VXLAN隧道采用的VNI是10，数据中心B内部的VXLAN隧道采用的VNI是20，在Transit Leaf1需要建立VNI映射表，即本端VNI（10）和映射VNI（30）的对应关系，同理，在Transit Leaf2上也需要建立VNI映射表，即本端VNI（20）和映射VNI（30）的对应关系。这样就可以正常进行二层报文转发了，以数据中心A向数据中心B发送报文为例：当Transit Leaf1收到内部发来的VXLAN报文后，进行解封装，然后通过查找VNI映射表获取映射VNI（30），再使用映射VNI进行VXLAN封装，发送给Transit Leaf2。Transit Leaf2收到后，进行解封装，然后通过查找VNI映射表获取本端VNI（20），再使用本端VNI进行VXLAN封装在内部转发。
+
+
+
+
+
+
 
 #### 三层网关
 
@@ -537,70 +552,33 @@ L2 and L3 gateway
 
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan&&non-vxlan.png)
 
-##### Spine作为边界：集中式
+##### 集中式网关
 
-使用spine作为边界节点。在使用spine作为边界节点时，为了使spine上路由的一致性，建议所有的spine都和外部连接。
+集中式网关MAC表受限
 
-![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxaln-spine-border.png)
+如下，使用集中式网关不同子网的vms，纵然VM在同一个ToR设备上，流量也需要走网关进行路由，路径不是最优。
 
-##### Leaf作为边界：分布式
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan-L3-集中式网关-1.png)
 
-使用专门的leaf作为边界节点。这种情况下，对于南北流量，增加了额外的一跳；但也使得spine不用承担VTEP功能，减轻VTEP负担。
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan-L3-集中式网关-2.png)
 
-![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan-leaf-border.png)
+不同ToR
 
-
-
-
-
-虚拟机要想与外部网络进行三层通信，需要在接入虚拟机的本地分布式VXLAN IP网关上指定流量的下一跳为Border，可以通过如下方式来实现：
-
-* 在本地分布式VXLANIP网关上配置静态路由，指定路由下一跳为Border上同一个VXLAN对应VSI虚接口的IP地址。
-*  在本地分布式VXLANIP网关上配置策略路由，设置报文的下一跳为Border上同一个VXLAN对应VSI虚接口的IP地址。
-
-```bash
-# 创建VSI虚接口VSI-interface1，为其配置IP地址，该IP地址作为VXLAN 10内虚拟机的网关地址，指定该接口的MAC地址，并配置该接口定时发送免费ARP报文。
-
-[SwitchD] interface vsi-interface 1
-[SwitchD-Vsi-interface1] ip address 10.1.1.1 255.255.255.0
-[SwitchD-Vsi-interface1] mac-address 1-1-1
-[SwitchD-Vsi-interface1] arp send-gratuitous-arp interval 200000
-[SwitchD-Vsi-interface1] quit
-
-# 配置VXLAN 10所在的VSI实例与接口VSI-interface1关联。
-
-[SwitchD] vsi vpna
-[SwitchD-vsi-vpna] gateway vsi-interface 1
-[SwitchD-vsi-vpna] quit
-
-# 创建VSI虚接口VSI-interface2，为其配置IP地址，该IP地址作为VXLAN 20内虚拟机的网关地址，指定该接口的MAC地址，并配置该接口定时发送免费ARP报文。
-
-[SwitchD] interface vsi-interface 2
-[SwitchD-Vsi-interface2] ip address 10.1.2.1 255.255.255.0
-[SwitchD-Vsi-interface2] mac-address 2-2-2
-[SwitchD-Vsi-interface2] arp send-gratuitous-arp interval 200000
-[SwitchD-Vsi-interface2] quit
-
-# 配置VXLAN 20所在的VSI实例与接口VSI-interface2关联。
-
-[SwitchD] vsi vpnb
-[SwitchD-vsi-vpnb] gateway vsi-interface 2
-[SwitchD-vsi-vpnb] quit
-
-# 配置OSPF发布VSI虚接口、Vlan-interface100接口所在网段的路由。
-# 或者简单点只写 静态路由
-[SwitchD] ospf 2 router-id 4.4.4.4
-[SwitchD-ospf-2] area 0
-[SwitchD-ospf-2-area-0.0.0.0] network 10.1.1.0 0.0.0.255
-[SwitchD-ospf-2-area-0.0.0.0] network 10.1.2.0 0.0.0.255
-[SwitchD-ospf-2-area-0.0.0.0] network 100.1.1.0 0.0.0.255
-[SwitchD-ospf-2-area-0.0.0.0] quit
-[SwitchD-ospf-2] quit
-```
-
-end
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan-L3-集中式网关-3.png)
 
 
+
+
+
+##### 分布式网关
+
+分布式网关需要设备支持BGP和EVPN。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan-L3-分布式网关.jpg)
+
+###### 对称IRB
+
+###### 非对称IRB
 
 
 

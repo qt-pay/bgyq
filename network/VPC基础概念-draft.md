@@ -2,7 +2,7 @@
 
 VPC: virtual private cloud
 
-### VPC疑问
+### VPC疑问:confused:
 
 已知，我的vpc通过VxLAN技术来实现。
 
@@ -277,6 +277,16 @@ n租户模型基于OpenStack逻辑概念
 * 对于VPC类租户，使用 VRF实现在路由层面的租户隔离 ，每个VPC类租户使用单独的VRF
 * 除非明确配置，数据中心内不允许跨租户的流量访问（即租户间互访流量建议通过广域互通）
 * 网络服务隔离，为每个租户提供单独的FW、LB及NAT服务
+
+##### VPC逻辑拓扑
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vpc底层操作.jpg)
+
+
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vpc-逻辑拓扑-1.jpg)
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vpc-逻辑拓扑-2.jpg)
 
 
 

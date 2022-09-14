@@ -40,11 +40,11 @@ VLANs use software to emulate separate physical LANs. Each VLAN is thus a separa
 
 
 
-#### vlan and ovs and vm
+#### vlan and ovs and vm：MAC寻址
 
 vlan是交换机上的元数据，云平台下发虚拟机时给vm指定vlan就是给vm指定网络了。
 
-同vlan在一个网段就能通信了。
+同vlan在一个网段就能通信了，同一个VLAN中arp广播可以拿到IP对应的MAC，从而实现通讯。
 
  vm如果是同网段，但是没给该网段增加vlan id，这两个vm也不能通讯，因为ovs-vswitch从host nic出去时，如果物理网络没有相应的vlan ID，就会被physical switch给丢弃
 
@@ -57,6 +57,13 @@ Ethernet network for VM data traffic, which will carry VLAN-tagged traffic betwe
 cloudos 创建k8s时，新规划了业务网段（新的网段和vlan），但是没有在physical switch上添加放通该vlan id，导致cloudos 下发vm时，给k8s node 分配了同网段的IP，但k8s node之间无法相互访问，导致etcd选举失败。
 
 因为，流量最终是从host nic出去，进入physical switch上流通的。
+
+physical switch配置vlan互通：
+
+```bash
+```
+
+
 
 #### 基础规则
 
@@ -361,6 +368,61 @@ IP地址是将数据包带到VLAN 家门口...然后vlan将frame传递给hos。
 
 4、A和B不同IP子网，不同VLAN：需要路由器才能进行单播通讯，不会有广播跨子网干扰。
 
+如下，相同IP段主机，VLAN设置不一致无法通讯。引申，相同网段的虚拟机分布在不同host如果host所在的交换机没有放行vm所在vlan，vm也无法通讯
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vlan-and-subnet.jpg)
+
+``` bash
+[Huawei-Vlanif20]display interface vlanif 10
+Vlanif10 current state : UP
+Line protocol current state : UP
+Last line protocol up time : 2022-09-14 20:25:36 UTC-08:00
+Description:
+Route Port,The Maximum Transmit Unit is 1500
+Internet Address is 1.1.1.1/8
+IP Sending Frames' Format is PKTFMT_ETHNT_2, Hardware address is 4c1f-cc02-4e45
+Current system time: 2022-09-14 20:42:31-08:00
+    Input bandwidth utilization  : --
+    Output bandwidth utilization : --
+
+[Huawei-Vlanif20]display interface vlanif 20
+Vlanif20 current state : UP
+Line protocol current state : UP
+Last line protocol up time : 2022-09-14 20:36:23 UTC-08:00
+Description:
+Route Port,The Maximum Transmit Unit is 1500
+Internet Address is 2.2.2.1/8
+IP Sending Frames' Format is PKTFMT_ETHNT_2, Hardware address is 4c1f-cc02-4e45
+Current system time: 2022-09-14 20:42:37-08:00
+    Input bandwidth utilization  : --
+    Output bandwidth utilization : --
+    
+    
+[Huawei-Vlanif20]display vlan
+The total number of vlans is : 3
+--------------------------------------------------------------------------------
+U: Up;         D: Down;         TG: Tagged;         UT: Untagged;
+MP: Vlan-mapping;               ST: Vlan-stacking;
+#: ProtocolTransparent-vlan;    *: Management-vlan;
+--------------------------------------------------------------------------------
+
+VID  Type    Ports                                                          
+--------------------------------------------------------------------------------
+1    common  UT:GE0/0/3(U)      GE0/0/4(D)     GE0/0/24(D)                                     
+
+10   common  UT:GE0/0/1(U)                                                      
+
+20   common  UT:GE0/0/2(U)                                                      
+
+
+VID  Status  Property      MAC-LRN Statistics Description      
+--------------------------------------------------------------------------------
+
+1    enable  default       enable  disable    VLAN 0001                         
+10   enable  default       enable  disable    VLAN 0010                         
+20   enable  default       enable  disable    VLAN 0020  
+```
+
 
 
 情形1是常见的小型局域网；
@@ -375,7 +437,7 @@ IP地址是将数据包带到VLAN 家门口...然后vlan将frame传递给hos。
 
 #### VLAN IP
 
-给VLAN配置IP就是设置一个网关地址，该vlan下的网关地址就是vlan_if
+给VLAN配置IP就是设置一个网关地址，该vlan下的网关地址就是vlan_if，通常这个IP就是vlan的网关
 
 
 
