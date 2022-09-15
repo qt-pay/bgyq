@@ -1558,6 +1558,38 @@ test
 
 
 
+#### incomparable type
+
+Currently (Go 1.19), Go doesn't support comparisons (with the `==` and `!=` operators) for values of the following types:
+
+- slice types
+- map types
+- function types
+- any struct type with a field whose type is incomparable and any array type which element type is incomparable.
+
+Above listed types are called incomparable types. All other types are called comparable types. Compilers forbid comparing two values of incomparable types.
+
+相同长度的数组可以比较大小
+
+```go
+func main{
+    va := [3]int{1,2,3}
+	vb := [3]int{1,2,3}
+	if va == vb{
+		fmt.Println("va == vb")
+	}
+
+}
+// output
+va == vb
+```
+
+长度不同的数组无法`==`比较
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/array-length-comparable.png)
+
+
+
 #### Sync.map
 
 官方的[faq](https://golang.org/doc/faq#atomic_maps)已经提到内建的`map`不是线程(goroutine)安全的。\
@@ -2736,6 +2768,238 @@ struct的属性是否被导出，也遵循大小写的原则：首字母大写�
 
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/golang同package可以直接引用.jpg)
 
+##### struct tag 101:imp:
+
+反序列话时，key必须和struct字段或者字段对应tag相等
+
+```go
+type User struct {
+	Id        int       `json:"id"`
+	Name      string    `json:"name"`
+	Email      string    `json:"emailAddress"`
+}
+
+func main() {
+	u := &User{}
+	str := []byte(`{"name":"lee","id":5266, "mail":"test@163.com"}`)    //这个不能导出mail，因为mail不是`Email`, 也不是`emailAddress`,所以不能导出
+	//str := []byte(`{"name":"lee","id":5266, "emailAddress":"test@163.com"}`)
+	if err := json.Unmarshal(str, u); err != nil {
+		return
+	}
+	fmt.Println(u)
+}
+// output
+&{5266 lee }
+```
+
+##### struct tag 102: map
+
+`valid`是自定义的校验字段
+
+```go
+type Person struct {
+    Name string    `json:"name"`
+    Age  int       `json:"age" valid:"1-100"`
+}
+ 
+func (p * Person) validation() bool {
+    v := reflect.ValueOf(*p)
+    tag := v.Type().Field(1).Tag.Get("valid")
+    val := v.Field(1).Interface().(int)
+    fmt.Printf("tag=%v, val=%v\n", tag, val)
+    
+    result := strings.Split(tag, "-")
+    var min, max int
+    min, _ = strconv.Atoi(result[0])
+    max, _ = strconv.Atoi(result[1])
+ 
+    if val >= min && val <= max {
+        return true
+    } else {
+        return false
+    }
+}
+ 
+func main() {
+    person1 := Person { "tom", 12 }
+    if person1.validation() {
+        fmt.Printf("person 1: valid\n")
+    } else {
+        fmt.Printf("person 1: invalid\n")
+    }
+    person2 := Person { "tom", 250 }
+    if person2.validation() {
+        fmt.Printf("person 2 valid\n")
+    } else {
+        fmt.Printf("person 2 invalid\n")
+    }
+}
+```
+
+##### struct tag 103：advanced map:six:
+
+```go
+package main
+
+import (
+  "fmt"
+  "reflect"
+  "regexp"
+  "strings"
+)
+
+// Name of the struct tag used in examples.
+const tagName = "validate"
+
+// Regular expression to validate email address.
+var mailRe = regexp.MustCompile(`\A[\w+\-.]+@[a-z\d\-]+(\.[a-z]+)*\.[a-z]+\z`)
+
+// Generic data validator.
+type Validator interface {
+  // Validate method performs validation and returns result and optional error.
+  Validate(interface{}) (bool, error)
+}
+
+// DefaultValidator does not perform any validations.
+type DefaultValidator struct {
+}
+
+func (v DefaultValidator) Validate(val interface{}) (bool, error) {
+  return true, nil
+}
+
+// StringValidator validates string presence and/or its length.
+type StringValidator struct {
+  Min int
+  Max int
+}
+
+func (v StringValidator) Validate(val interface{}) (bool, error) {
+  l := len(val.(string))
+
+  if l == 0 {
+    return false, fmt.Errorf("cannot be blank")
+  }
+
+  if l < v.Min {
+    return false, fmt.Errorf("should be at least %v chars long", v.Min)
+  }
+
+  if v.Max >= v.Min && l > v.Max {
+    return false, fmt.Errorf("should be less than %v chars long", v.Max)
+  }
+
+  return true, nil
+}
+
+// NumberValidator performs numerical value validation.
+// Its limited to int type for simplicity.
+type NumberValidator struct {
+  Min int
+  Max int
+}
+
+func (v NumberValidator) Validate(val interface{}) (bool, error) {
+  num := val.(int)
+
+  if num < v.Min {
+    return false, fmt.Errorf("should be greater than %v", v.Min)
+  }
+
+  if v.Max >= v.Min && num > v.Max {
+    return false, fmt.Errorf("should be less than %v", v.Max)
+  }
+
+  return true, nil
+}
+
+// EmailValidator checks if string is a valid email address.
+type EmailValidator struct {
+}
+
+func (v EmailValidator) Validate(val interface{}) (bool, error) {
+  if !mailRe.MatchString(val.(string)) {
+    return false, fmt.Errorf("is not a valid email address")
+  }
+  return true, nil
+}
+
+// Returns validator struct corresponding to validation type
+func getValidatorFromTag(tag string) Validator {
+  args := strings.Split(tag, ",")
+
+  switch args[0] {
+  case "number":
+    validator := NumberValidator{}
+    fmt.Sscanf(strings.Join(args[1:], ","), "min=%d,max=%d", &validator.Min, &validator.Max)
+    return validator
+  case "string":
+    validator := StringValidator{}
+    fmt.Sscanf(strings.Join(args[1:], ","), "min=%d,max=%d", &validator.Min, &validator.Max)
+    return validator
+  case "email":
+    return EmailValidator{}
+  }
+
+  return DefaultValidator{}
+}
+
+// Performs actual data validation using validator definitions on the struct
+func validateStruct(s interface{}) []error {
+  errs := []error{}
+
+  // ValueOf returns a Value representing the run-time data
+  v := reflect.ValueOf(s)
+
+  for i := 0; i < v.NumField(); i++ {
+    // Get the field tag value
+    tag := v.Type().Field(i).Tag.Get(tagName)
+
+    // Skip if tag is not defined or ignored
+    if tag == "" || tag == "-" {
+      continue
+    }
+
+    // Get a validator that corresponds to a tag
+    validator := getValidatorFromTag(tag)
+
+    // Perform validation
+    valid, err := validator.Validate(v.Field(i).Interface())
+
+    // Append error to results
+    if !valid && err != nil {
+      errs = append(errs, fmt.Errorf("%s %s", v.Type().Field(i).Name, err.Error()))
+    }
+  }
+
+  return errs
+}
+
+type User struct {
+  Id    int    `validate:"number,min=1,max=1000"`
+  Name  string `validate:"string,min=2,max=10"`
+  Bio   string `validate:"string"`
+  Email string `validate:"email"`
+}
+
+func main() {
+  user := User{
+    Id:    0,
+    Name:  "superlongstring",
+    Bio:   "",
+    Email: "foobar",
+  }
+
+  fmt.Println("Errors:")
+  for i, err := range validateStruct(user) {
+    fmt.Printf("\t%d. %s\n", i+1, err.Error())
+  }
+}
+```
+
+
+
+
 
 #### interface
 
@@ -3335,3 +3599,4 @@ end
 11. https://cloud.tencent.com/developer/article/1200349
 12. https://www.jianshu.com/p/eb539203a982
 13. https://www.cnblogs.com/wuyepeng/p/13910678.html
+14. https://blog.csdn.net/whatday/article/details/109771182

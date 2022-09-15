@@ -453,9 +453,11 @@ vxlan：
 
 end
 
-#### OVS with dpdk
+### OVS with dpdk:fire:
 
 ovs-vswitchd主要包含ofproto、dpif、netdev模块。ofproto模块实现openflow的交换机；dpif模块抽象一个单转发路径；netdev模块抽象网络接口（无论物理的还是虚拟的）。 openvswitch.ko主要由数据通路模块组成，里面包含着流表。流表中的每个表项由一些匹配字段和要做的动作组成。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/ovs-with-dpdk-datapath.png)
 
 DPDK加速的OVS数据流转发的大致流程如下：
 
@@ -468,6 +470,69 @@ DPDK加速的OVS数据流转发的大致流程如下：
 4）控制器下发新的流表，该数据包重新发起选路，匹配；报文转发，结束。
 
 DPDK加速的OVS与原始OVS的区别在于，从OVS连接的某个网络端口接收到的报文不需要openvswitch.ko内核态的处理，报文通过DPDK PMD驱动直接到达用户态ovs-vswitchd里。
+
+OVS使用 DPDK的好处
+
+- 支持轻量型协议栈；
+- 兼容virtio，vhost-net和基于DPDK的vhost-user加速技术；
+- 支持Vxlan功能、端口Bonding功能；
+- 支持OpenFlow1.0&1.3；
+- 支持Meter功能、镜像功能；
+- 支持VM热迁移功能；
+- 性能较内核OVS可提升8~9倍。
+
+#### demo
+
+```bash
+# 加载VFIO内核模块
+
+modprobe vfio
+modprobe vfio-pci
+ifconfig eth0 down ; ifconfig eth1 down
+mkdir /etc/sysconfig/network-scripts/back ; mv /etc/sysconfig/network-scripts/{ifcfg-eth0,ifcfg-eth1}   /etc/sysconfig/network-scripts/back
+
+
+
+nic1_businfo=`ethtool -i eth0 | grep bus-info | awk '{print $2}'`
+nic2_businfo=`ethtool -i eth1 | grep bus-info | awk '{print $2}'`
+
+
+# 绑定dpdk网卡
+dpdk-devbind -b vfio-pci "$nic1_businfo"
+dpdk-devbind -b vfio-pci "$nic2_businfo"
+
+
+
+#dpdk添加开机启动
+chmod +x /etc/rc.d/rc.local && echo  "modprobe vfio" >>/etc/rc.local
+echo  "modprobe vfio-pci" >>/etc/rc.local
+echo  "dpdk-devbind -b vfio-pci "$nic1_businfo"" >>/etc/rc.local
+echo  "dpdk-devbind -b vfio-pci "$nic2_businfo"" >>/etc/rc.local
+
+
+
+# 两个网卡配置是bond
+
+ovs-vsctl add-bond br-tun business_bond p0 p1  lacp=active  bond_mode=balance-tcp \
+
+-- set Interface p0 type=dpdk options:dpdk-devargs="$nic1_businfo" \
+
+-- set Interface p1 type=dpdk options:dpdk-devargs="$nic2_businfo" \
+
+-- set Interface p0 mtu_request=2000 \
+
+-- set Interface p1 mtu_request=2000
+
+
+
+# 物理网卡根据DPDK核数开启多队列
+
+ovs-vsctl set Interface   p0 options:n_txq=4
+ovs-vsctl set Interface   p0 options:n_rxq=4
+ovs-vsctl set Interface   p1 options:n_txq=4
+ ovs-vsctl set Interface   p1 options:n_rxq=4
+
+```
 
 
 
