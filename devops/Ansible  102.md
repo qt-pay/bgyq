@@ -726,7 +726,7 @@ The `when` clause is a raw Jinja2 expression without double curly braces .
 
 end
 
-### Return Value
+### Return Value: rc 
 
 https://docs.ansible.com/ansible/latest/reference_appendices/common_return_values.html
 

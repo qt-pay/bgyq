@@ -47,6 +47,8 @@ L3 VNI与二层VNI是完全不同的。L2 VNI映射的是一个VLAN，或者一�
 
 ### OVS：as Docker
 
+https://arthurchiao.art/blog/ovs-deep-dive-0-overview/
+
 OVS可以说是网络虚拟化里最重要的工业级开源产品，OVS模仿物理交换机设备的工作流程，实现了很多物理交换机当时才支持的许多网络功能。
 
 vSwitch负责连接vNIC与物理网卡，同时也桥接同一物理服务器内的各个VM的vNIC。
@@ -72,7 +74,144 @@ ovs-vswitchd switches may be configured with any of the following features:
 
 •      Connectivity to an external OpenFlow controller, such as NOX.
 
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/ovs-arch-1.webp)
 
+As depicted in Fig.2.1, OVS is composed of three components:
+
+- vswitchd
+  - user space program, ovs deamon
+  - tools: `ovs-appctl`
+- ovsdb-server
+  - user space program, database server of OVS
+  - tools: `ovs-vsctl`, `ovs-ofctl`
+
+- kernel module (datapath)
+  - kernel space module, OVS packet forwarder
+  - tools: `ovs-dpctl`
+
+#### OVS Daemon
+
+`ovs-vswitchd` is **the main Open vSwitch userspace program**. It reads the desired Open vSwitch configuration from ovsdb-server over an IPC channel and passes this configuration down to the ovs bridges (implemented as a library called `ofproto`). It also passes certain status and statistical information from ovs bridges back into the database.
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vswitchd_ovsdb_ofproto.png)
+
+#### OVSDB
+
+Some transient configurations, e.g. flows, are stored in datapaths and vswitchd. Persistent configurations are stored in ovsdb, which survives reboot.
+
+`ovsdb-server` provides RPC itnerfaces to OVSDB. It supports JSON-RPC client connections over active or passive TCP/IP or Unix domain sockets.
+
+`ovsdb-server` runs either as a backup server, or as an active server. Only the active server handles transactions that will change the OVSDB.
+
+#### Datapath
+
+Datapath is the main packet forwarding module of OVS, implemented in kernel space for high performance. It caches OpenFlow flows, and execute actions on received packets which match specific flow(s). If no flow is matched for one packet, the packet will be delivered to userspace program `ovs-vswitchd`. Usually, `ovs-vswitchd` will issue an new flow to datapath which will be used to handle subsequent packets of this type. The high performance comes from the fact that most packets will match flows successfully in datapath, thus will be processed directly in kernel space.
+
+#### ovs流表处理流程
+
+`ovs`处理流表的过程是：
+1.ovs的datapath接收到从ovs连接的某个网络设备发来的数据包，从数据包中提取源/目的IP、源/目的MAC、端口等信息。
+2.ovs在**内核状态**下查看流表结构（通过Hash），观察是否有缓存的信息可用于转发这个数据包。
+3.内核不知道如何处置这个数据包会将其发送给用户态的ovs-vswitchd。
+4.ovs-vswitchd进程接收到upcall后，将检查数据库以查询数据包的目的端口是哪里，然后告诉内核应该将数据包转发到哪个端口，例如eth0。
+5.内核执行用户此前设置的动作。即内核将数据包转发给端口eth0，进而数据被发送出去。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/ovs-arch-2.png)
+
+The main components that an OVS distribution provides are:
+
+- **ovs-vswitchd**, a daemon that implements and controls the switch on the local machine, along with a companion Linux kernel module for flow-based switching. This daemon performs a lookup for the configuration data from the database server to set up the data paths.
+- **ovsdb-server**, a lightweight database server that ovs-vswitchd queries to obtain its configuration, which includes the interface, the flow content, and the Vlans. It provides RPC interfaces to the vswitch databases.
+- **ovs-dpctl**, a tool for configuring the switch kernel module and controlling the forwarding rules.
+- **ovs-vsctl**, a utility for querying and updating the configuration of ovs-vswitchd. It updates the index in ovsdb-server.
+- **Ovs-appctl**, is mainly a utility that sends commands to running Open vSwitch daemons (usually not used).
+- **Scripts and specs** for building RPMs for Citrix XenServer and Red Hat Enterprise Linux. The XenServer RPMs allow Open vSwitch to be installed on a Citrix XenServer host as a drop-in replacement for its switch, with additional functionality.
+
+
+
+#### ovs netdev
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/netdev_rx_tx.png)
+
+A network device (e.g. physical NIC) has two ends/parts, one end works in kernel, which is responsible for sending/receiving, and the other end in userspace, which manages the kernel parts, such as changing device MTU size, disabling/enabling queues, etc. The communication between kernel and userspace space is usually through [netlink](https://arthurchiao.art/blog/ovs-deep-dive-4-patch-port/) or [ioctl](https://arthurchiao.art/blog/ovs-deep-dive-4-patch-port/) (deprecated).
+
+For virtual network devices, such as TUN/TAP, the working process is similar, execpt that the packets a TAP device receives is not from outside, but from the userspace; and the packets a TAP device sends does not go to outside, but goes to userspace.
+
+In OVS, A `struct netdev` instance represents a network device in OVS userspace, it is used for controlling the kernel end of this device, it maybe a physical NIC, a TAP device, or other types.
+
+#### OVS internet port
+
+Access ports are IP based, so it is **L3 ports**. This is is different from other ports which just work in L2 for traffic forwarding - for the latter no IPs are configured on them, they are **L2 ports**.
+
+L2 ports works in dataplane (DP), for traffic forwarding; L3 ports works in control plane (CP)
+
+OVS is more powerful bridge than linux bridge, but since it is still a L2 bridge, some general bridge conventions it has to conform to.
+
+> OVS创建L2 bridge， bridge是没有IP的，所以将physical NIC加入OVS L2 bridge，会导致网卡IP消失
+
+Among those basic rules, one is that it should provide the ability to hold an IP for an OVS bridge: to be more clear, it should provide a similar functionality as Linux bridge’s virtual accessing port does. With this functionality, even if all physical port are added to OVS bridge, the host could still be accessible from outside (as we discussed in secion 2, without this, the host will lose connection).
+
+OVS `internal port` is just for this purpose.
+
+#####  Usage
+
+When creating an `internal port` on OVS bridge, an IP could be configured on it, and the host is accessible by this IP address. Ordinary OVS users should not worry about the implementation details, they just need to know that `internal ports` act similar as linux tap devices.
+
+Create an internal port `vlan1000` on bridge `br0`, and configure and IP on it:
+
+```bash
+$ ovs-vsctl add-port br0 vlan1000 -- set Interface vlan1000 type=internal
+
+$ ifconfig vlan1000
+
+$ ifconfig vlan1000 <ip> netmask <mask> up
+```
+
+##### Some Experiments
+
+We have ***hostA\***, and the OVS bridge on ***hostA\*** looks like this:
+
+```bash
+root@hostA # ovs-vsctl show
+ce8cf3e9-6c97-4c83-9560-1082f1ae94e7
+    Bridge br-bond
+        Port br-bond
+            Interface br-bond
+                type: internal
+        Port "vlan1000"
+            tag: 1000
+            Interface "vlan1000"
+                type: internal
+        Port "bond1"
+            Interface "eth1"
+            Interface "eth0"
+    ovs_version: "2.3.1"
+```
+
+Two physical ports *eth0* and *eth1* is added to the bridge (bond), two internal ports *br-bond* (the default one of this bridge, not used) and *vlan1000* (we created it). We make *vlan1000* as the accessing port of this host by configuring an IP address on it:
+
+```bash
+root@hostA # ifconfig vlan1000 10.18.138.168 netmask 255.255.255.0 up
+
+## virtual L3 Port MAC and IP
+root@hostA # ifconfig vlan1000
+vlan1000  Link encap:Ethernet  HWaddr a6:f2:f7:d0:1d:e6  
+          inet addr:10.18.138.168  Bcast:10.18.138.255  Mask:255.255.255.0
+```
+
+ping ***hostA\*** from another host ***hostB\*** (with IP 10.32.4.123), capture the packets on ***hostA\*** and show the MAC address of L2 frames:
+
+```bash
+root@hostA # tcpdump -e -i vlan1000 'icmp'
+10:28:24.176777 64:f6:9d:5a:bd:13 > a6:f2:f7:d0:1d:e6, 10.32.4.123   > 10.18.138.168: ICMP echo request
+10:28:24.176833 a6:f2:f7:d0:1d:e6 > aa:bb:cc:dd:ee:ff, 10.18.138.168 > 10.32.4.123:   ICMP echo reply
+10:28:25.177262 64:f6:9d:5a:bd:13 > a6:f2:f7:d0:1d:e6, 10.32.4.123   > 10.18.138.168: ICMP echo request
+10:28:25.177294 a6:f2:f7:d0:1d:e6 > aa:bb:cc:dd:ee:ff, 10.18.138.168 > 10.32.4.123:   ICMP echo reply
+```
+
+We could see that the **source MAC (`a6:f2:f7:d0:1d:e6`) of ICMP echo reply packets** is just the **vlan1000’s address, not eth0 or eth1’s - although the packets will be sent out from either eth0, or eth1**. What this implies is that, from the outside view, ***hostA\*** is seen to have only one interface with MAC address `a6:f2:f7:d0:1d:e6`, and no matter how many physical ports are on ***hostA\***, as long as they are managed by the OVS (or linux bridge), these physical ports will never be seen from the outside.
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/bridge_managed_host_outside_view.png)
 
 #### neutron-openvswitch-agent：ML2 plugin
 
@@ -536,19 +675,43 @@ ovs-vsctl set Interface   p1 options:n_txq=4
 
 
 
+### OVN and Geneve
+
+Generic Network Virtualization Encapsulation的简称，对应中文是通用网络虚拟化封装，由IETF草案定义。
+
+OpenVSwitch的衍生项目OVN（Open Virtual Network）应该是GENEVE的最大拥趸。
+
+OVN只支持GENEVE和STT作为网络虚拟化协议。这是因为OVN除了24bit的VNI之外，还要在overlay数据中传输15bit的源网络端口，和16bit的目的网络端口，以支持更高效的ACL和组播。GENEVE因为是可扩展的，自然是支持传递额外的元数据。STT因为本身的元数据是64bit的，也放得下OVN想要传递的内容。至于其他的协议，例如VXLAN，NVGRE，是没有可能满足OVN的需求。
+
+GENEVE能很好的兼容VXLAN，因为就算是VXLAN的主场，GENEVE最后还是赢了。但是兼容性并不能解释最后的现象，文章本身也没有分析原因，只是提到了UDP checksum。OVN默认打开了GENEVE上的UDP checksum。因为Linux系统内核的一些优化，使得GENEVE数据包被网卡收到之后，网卡会计算并验证外层UDP的checksum。如果验证通过了，网卡会汇报给系统内核。这样系统内核在解析GENEVE时，将不再计算内层报文的任何checksum。相应的网络数据处理会更快一些。而VXLAN协议规定外层UDP的checksum应该为0，这样外层UDP的checksum就没有办法被验证，而内层报文的checksum需要再计算一遍，相应的网络数据处理就要慢一点。
+
 ### OVN：as k8s
 
 [OVN (Open Virtual Network)](http://openvswitch.org/support/dist-docs/ovn-architecture.7.html) 是OVS提供的原生虚拟化网络方案，旨在解决传统SDN架构（比如Neutron DVR）的性能问题。
 
 OVS 社区觉得从长远来看，Neutron 应该让一个其它的项目来做虚拟网络的控制平面，Neutron 只需要提供 API 的处理，于是 OVS 社区推出了 OVN（Open Virtual Switch）这个项目，OVN 是 OVS 的控制平面，它给 OVS 增加了对虚拟网络的原生支持，大大提高了 OVS 在实际应用环境中的性能和规模。
 
-OVN是OpenvSwitch项目组为OpenvSwitch开发SDN控制器，**同其他SDN产品相比，OVN对OpenvSwitch 及OpenStack有更好的兼容性和性能**
+**OVN是OpenvSwitch项目组为OpenvSwitch开发SDN控制器**，同其他SDN产品相比，OVN对OpenvSwitch 及OpenStack有更好的兼容性和性能
 
 
 
 #### OVN架构： man
 
 https://man7.org/linux/man-pages/man7/ovn-architecture.7.html
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/ovn-is-sdn-controller-of-ovs.webp)
+
+The main components of OVN can be seen either under a database or a daemon category:
+
+The OVN databases:
+
+- **Ovn-northbound ovsdb** represents the OpenStack/CMS integration point and keeps an intermediate and high-level of the desired state configuration as defined in the CMS. It keeps track of QoS, NAT, and ACL settings and their parent objects (logical ports, logical switches, logical routers).
+- **Ovn-southbound ovsdb** holds a more hypervisor specific representation of the network and keeps the run-time state (i.e., location of logical ports, location of physical endpoints, logical pipeline generated based on configured and run-time state).
+
+The OVN daemons:
+
+- **ovn-northd** converts from the high-level northbound DB to the run-time southbound DB, and generates logical flows based on high-level configurations.
+- **ovn-controller** is a local SDN controller that runs on every host and manages each OVS instance. It registers chassis and VIFs to the southbound DB and converts logical flows into physical flows (i.e., VIF UUIDs to OpenFlow ports). It pushes physical configurations to the local OVS instance through OVSDB and OpenFlow and uses SDN for remote compute location (VTEP). All of the controllers are coordinated through the southbound database.
 
 OVN逻辑流表会由ovn-northd分发给每台机器的ovn-controller，然后ovn-controller再把它们转换为物理流表。 
 
@@ -716,7 +879,7 @@ HV是Hypervisor ...
 
 ##### OVN Tunnel
 
-  OVN 支持的 tunnel 类型有三种，分别是 Geneve，STT 和 VXLAN。HV 与 HV 之间的流量，只能用 Geneve 和 STT 两种，HV 和 VTEP 网关之间的流量除了用 Geneve 和 STT 外，还能用 VXLAN，这是为了兼容硬件 VTEP 网关，因为大部分硬件 VTEP 网关只支持 VXLAN。虽然 VXLAN 是数据中心常用的 tunnel 技术，但是 VXLAN header 是固定的，只能传递一个 VNID（VXLAN network identifier），如果想在 tunnel 里面传递更多的信息，VXLAN 实现不了。所以 OVN 选择了 Geneve 和 STT，Geneve 的头部有个 option 字段，支持 TLV 格式，用户可以根据自己的需要进行扩展，而 STT 的头部可以传递 64-bit 的数据，比 VXLAN 的 24-bit 大很多。
+  OVN 支持的 tunnel 类型有三种，分别是 Geneve，STT 和 VXLAN。HV 与 HV 之间的流量，只能用 Geneve 和 STT 两种，HV 和 VTEP 网关之间的流量除了用 Geneve 和 STT 外，还能用 VXLAN，这是为了兼容硬件 VTEP 网关（网络Overlay），因为大部分硬件 VTEP 网关只支持 VXLAN。虽然 VXLAN 是数据中心常用的 tunnel 技术，但是 VXLAN header 是固定的，只能传递一个 VNID（VXLAN network identifier），如果想在 tunnel 里面传递更多的信息，VXLAN 实现不了。所以 OVN 选择了 Geneve 和 STT，Geneve 的头部有个 option 字段，支持 TLV 格式，用户可以根据自己的需要进行扩展，而 STT 的头部可以传递 64-bit 的数据，比 VXLAN 的 24-bit 大很多。
 
   OVN tunnel 封装时使用了三种数据：
 
@@ -730,9 +893,96 @@ OVS 的 tunnel 封装是由 Openflow 流表来做的，所以 ovn-controller 需
 
    **OVN tunnel 里面所携带的 logical input port identifier 和 logical output port identifier 可以提高流表的查找效率，OVS 流表可以通过这两个值来处理报文，不需要解析报文的字段。** OVN 里面的 tunnel 类型是由 HV 上面的 ovn-controller 来设置的，并不是由 CMS 指定的，并且 OVN 里面的 tunnel ID 又由 OVN 自己分配的，所以用 neutron 创建 network 时指定 tunnel 类型和 tunnel ID（比如 vnid）是无用的，OVN 不做处理。
 
-##### Datapath
+##### Datapath: forwarding plane
 
-0.0
+https://arthurchiao.art/blog/ovs-deep-dive-3-datapath/
+
+Datapath is the forwarding plane of OVS.
+
+Initially, it is implemented as a kernel module, and kept as small as possible. Apart from the datapath, other components are implemented in userspace, and have little dependences with the underlying systems. That means, porting ovs to another OS or platform is simple (in concept): just porting or re-implement the kernel part to the target OS or platform. As an example of this, ovs-dpdk is just an effort to run OVS over Intel [DPDK](https://arthurchiao.art/blog/ovs-deep-dive-3-datapath/dpdk.org). For those who do, there is an official [porting guide](https://github.com/openvswitch/ovs/blob/master/Documentation/topics/porting.rst) for porting OVS to other platforms.
+
+In fact, in recent versions (I’m not sure since which version, but according to my tests, 2.3+ support this) of OVS, there are already two type of datapath that you could choose from: **kernel datapath and userspace datapath**.
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/dpif_providers.png)
+
+which discusses OVS hardware offloading, reveals even more datapath types (enterprise solution). In this article, we only focus on kernel datapath and userspace datapath, which are provided in stock openvswitch.
+
+**Open vSwitch supports different datapaths on different platforms[6]:**
+
+- **Linux upstream**
+
+  The datapath implemented by the kernel module shipped with Linux upstream. Since features have been gradually introduced into the kernel, the table mentions the first Linux release whose OVS module supports the feature.
+
+- **Linux OVS tree**
+
+  The datapath implemented by the Linux kernel module distributed with the OVS source tree. Some features of this module rely on functionality not available in older kernels: in this case the minumum Linux version (against which the feature can be compiled) is listed.
+
+- **Userspace**
+
+  Also known as DPDK, dpif-netdev or dummy datapath. It is the only datapath that works on NetBSD and FreeBSD.
+
+- **Hyper-V**
+
+  Also known as the Windows datapath.
+
+###### Kernel Datapath
+
+Here we only talk about the kernel datapath on Linux platform.
+
+On Linux, kernel datapath is the default datapath type. It needs a kernel module `openvswitch.ko` to be loaded:
+
+```bash
+$ lsmod | grep openvswitch
+openvswitch            98304  3
+```
+
+If it is not loaded, you need to install it manually:
+
+```bash
+$ find / -name openvswitch.ko
+/usr/lib/modules/3.10.0-514.2.2.el7.x86_64/kernel/net/openvswitch/openvswitch.ko
+
+$ modprobe openvswitch.ko
+$ insmod /usr/lib/modules/3.10.0-514.2.2.el7.x86_64/kernel/net/openvswitch/openvswitch.ko
+$ lsmod | grep openvswitch
+```
+
+Creating an OVS bridge:
+
+```bash
+$ ovs-vsctl add-br br0
+
+$ ovs-vsctl show
+05daf6f1-da58-4e01-8530-f6ec0d51b4e1
+    Bridge br0
+        Port br0
+            Interface br0
+                type: internal
+```
+
+###### Userspace Datapath
+
+Userspace datapath differs from the traditional datapath in that its packet forwarding and processing are done in userspace. Among those, **netdev-dpdk** is one of the implementations, which is supported since OVS 2.4.
+
+Commands for creating an OVS bridge using userspace datapath:
+
+```bash
+$ ovs-vsctl add-br br0 -- set Bridge br0 datapath_type=netdev
+```
+
+Note that you must specify the `datapath_type` to be `netdev` when creating a bridge, otherwise you will get an error like ***ovs-vsctl: Error detected while setting up ‘br0’\***.
+
+#### OVN Logical flows
+
+Here is how north-south DB flow population works:
+
+OVN introduces an intermediary representation of the system’s configuration, called logical flows. Logical network configurations are stored in Northbound DB (e.g. defined and written down by CMS-Neutron ML2). The logical flows have a similar expressiveness to physical OpenFlow flows, but they only operate on logical entities. Logical flows for a given network are identical across the whole environment. 
+
+Ovn-northd translates these logical network topology elements to the southbound DB into logical flow tables. With all the other tables that are in the southbound DB, they are pushed down to all the compute nodes and the OVN controllers by an OVSDB monitor request. Therefore, all the changes that happen in the Southbound DB are pushed down to the OVN controllers where relevant (this is called ‘conditional monitoring’) and the chassis hypervisors accordingly generate physical flows. On the hypervisor, ovn-controller receives an updated Southbound DB data, updates the physical flows of OVS, and updates the running configuration version ID. 
+
+On the hypervisor level, when a new VM is added to a compute node, the OVN controller on this specific compute node sends (pushes up) a new condition to the Southbound DB via the OVSDB protocol. This eliminates irrelevant update flows.
+
+Ovn-northd keeps monitoring nb_cfg globally and per chassis, where nb_cfg provides the current requested configuration, sb_cfg provides flow configuration, and hv_cfg provides the chassis running version.
 
 #### OVN Overlay:heavy_check_mark:
 
@@ -780,6 +1030,8 @@ _uuid               : 8fc46e14-1c0e-4129-a123-a69bf093c04e
 external_ids        : {logical-switch="182eaadd-2cc3-4ff3-9bef-3793bb2463ec", name="neutron-f3dc2e30-f3e8-472b-abf8-ed455fc928f4"}
 tunnel_key          : 177
 ```
+
+
 
 ##### Options
 
@@ -1033,3 +1285,5 @@ https://github.com/eBay/go-ovn
 3. https://blog.csdn.net/qq_31331027/article/details/81448313
 4. https://www.cnblogs.com/laolieren/p/ovn-architecture.html
 5. https://feisky.gitbooks.io/sdn/content/ovs/ovn-kubernetes.html
+6. https://www.sdnlab.com/20693.html
+7. https://arthurchiao.art/blog/ovs-deep-dive-4-patch-port/

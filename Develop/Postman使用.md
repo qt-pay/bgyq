@@ -34,6 +34,8 @@ curl 'http://100.5.15.111:9091/api/v1/cluster/deployment?t=1629286947976' \
 　　Newman 是 Postman 推出的一个 nodejs 库，直接来说就是 Postman 的json文件可以在命令行执行的插件。
 　　Newman 可以方便地运行和测试集合，并用之构造接口自动化测试和持续集成。
 
+Newman is a command-line collection runner for Postman. It allows you to effortlessly run and test a Postman collection directly from the command-line. It is built with extensibility in mind so that you can easily integrate it with your continuous integration servers and build systems.
+
 ```bash
 $ newman run --reporters cli,json  -e execute-environment.json --insecure --timeout-request 30000 --reporter-json-export execute-result.json  execute-collections.json > execute-log.log
 

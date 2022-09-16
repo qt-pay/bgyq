@@ -175,6 +175,12 @@ NVGRE的主要支持者是Microsoft。不像VXLAN,NVGRE没有采用标准的传�
 
  作者：云V小编 https://www.bilibili.com/read/cv11414019 出处：bilibili
 
+##### Geneve
+
+Generic Network Virtualization Encapsulation的简称，对应中文是通用网络虚拟化封装，由IETF草案定义。
+
+在实现上，GENEVE与VXLAN类似，仍然是Ethernet over UDP，也就是用UDP封装Ethernet。VXLAN header是固定长度的（8个字节，其中包含24bit VNI），与VXLAN不同的是，GENEVE header中增加了TLV（Type-Length-Value），由8个字节的固定长度和0~252个字节变长的TLV组成。GENEVE header中的TLV代表了可扩展的元数据。
+
 ##### VxLAN:star2:
 
 VXLAN技术已经成为目前Overlay技术事实上的标准，得到了非常广泛的应用。
