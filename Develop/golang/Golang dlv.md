@@ -15,6 +15,13 @@ Delve 是使用 Go 编写的 Go 程序的调试器。 它可以通过在用户�
 ```bash
 $ go get -u github.com/go-delve/delve/cmd/dlv
 $ go install  github.com/go-delve/delve/cmd/dlv@latest
+
+## 报错了？
+$ go install  github.com/go-delve/delve/cmd/dlv@latest
+can't load package: package github.com/go-delve/delve/cmd/dlv@latest: can only use path@version syntax with 'go get'
+
+## 这样执行ok
+$ go install  github.com/go-delve/delve/cmd/dlv
 ```
 
 
@@ -340,7 +347,105 @@ end
 
 ### dlv demo：要求golang 1.13
 
+```bash
+$ cat -n /tmp/test.go
+     1  package main
+     2  import "fmt"
+     3
+     4  func main(){
+     5    go func(n int){
+     6      for{
+     7        n++
+     8        fmt.Println(n)
+     9      }
+    10    }(9)
+    11    for{}
+    12  }
 
+$ go build test.go
+$  ls
+test  test.go
+$ ./test
+9
+...
+
+482299
+482300
+<hang>
+
+# 
+$ ps -ef
+UID          PID    PPID  C STIME TTY          TIME CMD
+root           1       0  0 14:56 pts/0    00:00:00 bash
+root         461       1 95 15:00 pts/0    00:00:45 ./test
+root         466       0  0 15:00 pts/1    00:00:00 bash
+root         472     466  0 15:01 pts/1    00:00:00 ps -ef
+# dlv attch test pid
+$ dlv attach 461
+Type 'help' for list of commands.
+## 可以缩写为grs
+(dlv) goroutines
+## test.go line 11 是main{}中的for{}
+* Goroutine 1 - User: /tmp/test.go:11 main.main (0x48cf9e) (thread 461)
+  Goroutine 2 - User: /usr/local./src/runtime/proc.go:305 runtime.gopark (0x42b4e0) [force gc (idle)]
+  Goroutine 3 - User: /usr/local./src/runtime/proc.go:305 runtime.gopark (0x42b4e0) [GC sweep wait]
+  Goroutine 4 - User: /usr/local./src/runtime/proc.go:305 runtime.gopark (0x42b4e0) [GC scavenge wait]
+  Goroutine 5 - User: /usr/local./src/runtime/proc.go:305 runtime.gopark (0x42b4e0) [GC worker (idle)]
+  Goroutine 6 - User: /usr/local./src/runtime/proc.go:305 runtime.gopark (0x42b4e0) [GC worker (idle)]
+  Goroutine 17 - User: /usr/local./src/runtime/proc.go:305 runtime.gopark (0x42b4e0) [finalizer wait]
+## test.go line 8 是main{}中的fmt.Println()
+  Goroutine 18 - User: /tmp/test.go:8 main.main.func1 (0x48cfe7) (thread 465)
+[8 goroutines]
+
+[8 goroutines]
+## 切换到 goroutine 18，查看
+(dlv) gr 18
+Switched from 1 to 18 (thread 465)
+## 查看goroutine stack
+(dlv) bt
+0  0x0000000000455553 in runtime.futex
+   at /usr/local./src/runtime/sys_linux_amd64.s:536
+1  0x0000000000451700 in runtime.systemstack_switch
+   at /usr/local./src/runtime/asm_amd64.s:330
+2  0x0000000000417457 in runtime.gcStart
+##  实际阻塞发送在这里
+   at /usr/local./src/runtime/mgc.go:1287
+3  0x000000000040b026 in runtime.mallocgc
+   at /usr/local./src/runtime/malloc.go:1115
+4  0x0000000000408f8b in runtime.convT64
+   at /usr/local./src/runtime/iface.go:352
+5  0x000000000048cfe7 in main.main.func1
+   at /tmp/test.go:8
+## 栈底为什么是 goexit
+6  0x0000000000453651 in runtime.goexit
+   at /usr/local./src/runtime/asm_amd64.s:1357
+(dlv)
+
+
+## 查看阻塞源代码
+$ cat -n /usr/local/go/src/runtime/mgc.go|grep 1287
+  1287          systemstack(stopTheWorldWithSema)
+```
+
+#### stopTheWorld导致hang
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/golang-gc-stw.jpg)
+
+GC STW的作用是抢占正在运行goroutine，将P标志为`_Pgcstop`，使其不在运行新的goroutine.
+
+`P` 代表 Logical Processor，是类似于 CPU 核心的概念
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/go-1.13-stw-1.jpg)
+
+golang 1.13 依赖栈增长实现检测即如果当前goroutine没有新的函数调用，就可以运行它一直执行...
+
+所以就导致了，上面例子中代码hang
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/go-1.12-stw-2.jpg)
+
+#### 疑惑？
+
+为什么要触发GC呢？
 
 ### 引用
 

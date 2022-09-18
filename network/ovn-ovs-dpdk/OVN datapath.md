@@ -1,12 +1,16 @@
 ## OVN datapath
 
+OVN DATAPATH identifies the logical datapath (a logical switch or a logical router) where the sample packet will begin.
+
 ## Logical network topology
+
+
 
 Every call to implement an element for the above data model is forwarded to OVN ML2 driver as defined by the `mechanism driver` setting of the ML2 plugin. This driver is responsible for the creation of an appropriate data model inside the OVN Northbound DB. The main elements of this data model are:
 
 - **Switch** equivalent of a Neutron’s Subnet, enables L2 forwarding for all attached ports
 - **Distributed Router** provides distributed routing between directly connected subnets
-- **Gateway Router** provides connectivity between external networks and distributed routers, implements NAT and Load Balancing
+- **Gateway Router（L3）** provides connectivity between external networks and distributed routers, implements NAT and Load Balancing
 - **Port** of a logical switch, attaches VM to the switch
 
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/ovn-zoom1.png)
@@ -18,6 +22,8 @@ This is a visual representation of our network topology inside OVN’s Northboun
 This topology is pretty similar to Neutron’s native data model with the exception of a gateway router. In OVN, a gateway router is a special non-distributed router which performs functions that are very hard or impossible to distribute amongst all nodes, like NAT and Load Balancing. This router only exists on a single compute node which is selected by the scheduler based on the `ovn_l3_scheduler` setting of the ML2 plugin. It is attached to a distributed router via a point-to-point /30 subnet defined in the `ovn_l3_admin_net_cidr` setting of the ML2 plugin.
 
 Apart from the logical network topology, Northbound database keeps track of all QoS, NAT and ACL settings and their parent objects. The detailed description of all tables and properties of this database can be found in the official [Northbound DB documentation](http://openvswitch.org/support/dist-docs/ovn-nb.5.html).
+
+
 
 ## OVN Southbound DB - logical flows
 
@@ -206,9 +212,145 @@ This was a very high-level, abridged and simplified version of how logical datap
 
 Apart from the logical flows, Southbound DB also contains a number of tables that establish the logical-to-physical bindings. For example, the `Port_Binding` table establishes binding between logical switch, logical port, logical port overlay ID (a.k.a. tunnel key) and the unique hypervisor ID. In the next section we’ll see how this information is used to translate logical flows into OpenFlow flows at each compute node. For full description of Southbound DB, its tables and their properties refer to the official SB [schema documentation](http://openvswitch.org/support/dist-docs/ovn-sb.5.html).
 
+## OVSDB
+
+http://www.h3c.com/cn/d_201811/1131081_30005_0.htm
+
+SDN网络中的协议按照功能可以分为管理层面协议与控制层面协议。以SDN控制器为界限，按照可编程接口的层级可以分为南向接口与北向接口。OpenFlow协议严格的来说，是一种控制层面的南向接口协议，而OVSDB管理协议，是管理层面的南向接口协议。
+
+OVSDB管理协议(Open vSwitch Database Management Protocol，开放虚拟交换机数据库管理协议) 起初由VMware公司提出，负责管理开源的软件交换机（OpenvSwitch,OVS）的开放虚拟交换机数据库（OpenvSwitch Database,OVSDB），是一个用于实现对虚拟交换机的可编程访问和配置管理的SDN管理协议。OVSDB管理协议定义了一套RPC接口，用户可通过远程调用的方式管理OVSDB，主要包括通信协议（JSON-RPC）方法和所支持的OVSDB操作。OVS是OVSDB的主要应用，其数据模式由OVSDB schema（DB-SCHEMA）定义。
+
+OVSDB协议的一些基本概念：
+
+**UUID**:通用唯一识别码 (Universally Unique Identifier)
+
+**OVS**: Open vSwitch，开放虚拟交换机，遵循开源Apache2.0许可
+
+**OVSDB**: 用于配置Open vSwich的数据库。
+
+**JSON**: JavaScript Object Notation，JS 对象标记，一种轻量级的数据交换格式。是OVSDB所使用的数据格式，由RFC4627定义。
+
+**JSON-RPC**: JSON Remote Procedure Call ，以JSON为协议的远程调用服务由JSON-RPC定义。
+
+**Durable**: 持久化，类似于非易失性磁盘存储。OVSDB支持选择一个事务是否是持久化的。
+
+### openvswitch/conf.db
+
+ovsdb-server: 轻量级的数据库服务，主要保存了整个OVS的配置信息，例如接口、交换信息和VLAN等等；ovs-vswithd的交换功能基于此数据库实现；
+
+```bash
+$ ovsdb-server -h
+ovsdb-server: Open vSwitch database server
+usage: ovsdb-server [OPTIONS] [DATABASE...]
+where each DATABASE is a database file in ovsdb format.
+The default DATABASE, if none is given, is /etc/openvswitch/conf.db.
+
+
+$ ls -l /etc/openvswitch/conf.db
+lrwxrwxrwx 1 root root 28 Sep 18 10:50 /etc/openvswitch/conf.db -> /var/lib/openvswitch/conf.db
+$ du -sh /var/lib/openvswitch/conf.db
+20K     /var/lib/openvswitch/conf.db
+```
+
+ovs-vswitchd.conf.db - Open_vSwitch database schema
+
+A  database  with  this  schema  holds  the  configuration for one Open vSwitch daemon. The top-level  configuration  for  the  daemon  is  the Open_vSwitch  table,  which  must  have  exactly one record. Records in other tables are significant only when they can be reached directly  or indirectly  from the Open_vSwitch table. Records that are not reachable from the Open_vSwitch table are automatically deleted  from  the  data‐base, except for records in a few distinguished `root set`tables.
+
+数据库可以通过ovsdb-client dump将数据库内容打印出来
+
+```bash
+$ ovsdb-client dump
+```
+
+
+
+### ovnnb-db and ovnsb-db
+
+```bash
+$ ovn-northd -h
+ovn-northd: OVN northbound management daemon
+usage: ovn-northd [OPTIONS]
+
+Options:
+  --ovnnb-db=DATABASE       connect to ovn-nb database at DATABASE
+                            (default: unix:/usr/local/var/run/openvswitch/ovnnb_db.sock)
+  --ovnsb-db=DATABASE       connect to ovn-sb database at DATABASE
+                            (default: unix:/usr/local/var/run/openvswitch/ovnsb_db.sock)
+
+
+```
+
+
+
+
+
+### ovn-nbctl and ovn-sbctl: 
+
+You can use the `ovn-nbctl` utility to see an overview of the logical topology.
+
+```bash
+$ ovn-nbctl show
+lswitch 78687d53-e037-4555-bcd3-f4f8eaf3f2aa (sw0)
+    lport sw0-port1
+        addresses: 00:00:00:00:00:01
+    lport sw0-port2
+        addresses: 00:00:00:00:00:02
+```
+
+The `ovn-sbctl` utility can be used to see into the state stored in the `OVN_Southbound` database. The `show` command shows that there is a single chassis with two logical ports bound to it. In a more realistic multi-hypervisor environment, this would list all hypervisors and where all logical ports are located.
+
+```bash
+$ ovn-sbctl show
+Chassis “56b18105-5706-46ef-80c4-ff20979ab068”
+    Encap geneve
+        ip: “127.0.0.1”
+    Port_Binding “sw0-port1”
+    Port_Binding “sw0-port2”
+```
+
+
+
+#### datapath
+
+```bash
+$ ovn-sbctl lflow-list|grep -i datapath
+Datapath: "sw0" (057e0666-0eb0-4756-89ec-96aec852d465)  Pipeline: ingress
+Datapath: "sw0" (057e0666-0eb0-4756-89ec-96aec852d465)  Pipeline: egress
+Datapath: "lr0" (8d2e4e10-085e-431f-b01b-a11d2e8f3005)  Pipeline: ingress
+Datapath: "lr0" (8d2e4e10-085e-431f-b01b-a11d2e8f3005)  Pipeline: egress
+Datapath: "sw1" (8ef9f62a-b840-4870-bba4-510d60472eab)  Pipeline: ingress
+Datapath: "sw1" (8ef9f62a-b840-4870-bba4-510d60472eab)  Pipeline: egress
+
+```
+
+### ovn-appctl：？
+
+ovn-appctl - utility for configuring running OVN daemons.
+
+```bash
+$ ovn-appctl list-commands
+2022-09-18T07:45:07Z|00001|unixctl|WARN|failed to connect to /var/run/ovn/ovn-controller.33334.ctl
+ovn-appctl: cannot connect to "/var/run/ovn/ovn-controller.33334.ctl" (No such file or directory)
+$ find / -name "ovn-controller.*.ctl"
+/run/openvswitch/ovn-controller.33334.ctl
+
+```
+
+end
+
+### 详解
+
+https://www.cnblogs.com/CasonChan/p/4754620.html
+
 ## OVN Controller - OpenFlow flows
 
-[OVN Controller](http://openvswitch.org/support/dist-docs/ovn-controller.8.html) process is the distributed part of OVN SDN controller. This process, running on each compute node, connects to Southbound DB via OVSDB and configures local OVS according to information received from it. It also uses Southbound DB to exchange the physical location information with other hypervisors. The two most important bits of information that OVN controller contributes to Southbound DB are physical location of logical ports and overlay tunnel IP address. These are the last two missing pieces to map logical flows to physical nodes and networks.
+**The major difference is that logical flows describe the detailed behavior of an entire network that can span any number of hosts. **  OpenFlow only can be used to build packet processing pipelines of a single switch.
+
+ OpenFlow can be used to build packet processing pipelines of a single switch. Manually programming these pipelines on one host, much less hundreds or thousands of hosts, can be tedious. That’s where an SDN controller that programs flows across many switches to accomplish a task is helpful. That’s the role that OVN plays for the Open vSwitch project. OVN does all of the OpenFlow programming necessary to implement the network topologies and security policies you define using its high level configuration interface.
+
+**OVN Controller process is the distributed part of OVN SDN controller. This process, running on each compute node, connects to Southbound DB via OVSDB and configures local OVS according to information received from it.** It also uses Southbound DB to exchange the physical location information with other hypervisors. The two most important bits of information that OVN controller contributes to Southbound DB are physical location of logical ports and overlay tunnel IP address. These are the last two missing pieces to map logical flows to physical nodes and networks.
+
+> OVN SouthBound DB的数据还是持久化在 ovs的OVSDB中。
 
 The whole flat space of OpenFlow tables is split into multiple areas. Tables 16 to 47 implement an ingress logical pipeline and tables 48 to 63 implement an egress logical pipeline. These tables have no notion of physical ports and are functionally equivalent to logical flows in Southbound DB. Tables 0 and 65 are responsible for mapping between the physical and logical realms. In table 0 packets are matched on the physical incoming port and assigned to a correct logical datapath as was defined by the `Port_Binding` table. In table 65 the information about the outport, that was determined during the ingress pipeline processing, is mapped to a local physical interface and the packet is sent out.
 

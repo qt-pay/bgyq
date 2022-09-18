@@ -687,13 +687,23 @@ GENEVE能很好的兼容VXLAN，因为就算是VXLAN的主场，GENEVE最后还�
 
 ### OVN：as k8s
 
+You can use the `ovn-nbctl` utility to see an overview of the logical topology.
+
+The `ovn-sbctl` utility can be used to see into the state stored in the `OVN_Southbound` database. 
+
+OVS只能处理single node 流量，而且需要手工配置。OVN是OVS的SDN controller，实现海量ovs nodes流量管理。
+
 [OVN (Open Virtual Network)](http://openvswitch.org/support/dist-docs/ovn-architecture.7.html) 是OVS提供的原生虚拟化网络方案，旨在解决传统SDN架构（比如Neutron DVR）的性能问题。
 
 OVS 社区觉得从长远来看，Neutron 应该让一个其它的项目来做虚拟网络的控制平面，Neutron 只需要提供 API 的处理，于是 OVS 社区推出了 OVN（Open Virtual Switch）这个项目，OVN 是 OVS 的控制平面，它给 OVS 增加了对虚拟网络的原生支持，大大提高了 OVS 在实际应用环境中的性能和规模。
 
 **OVN是OpenvSwitch项目组为OpenvSwitch开发SDN控制器**，同其他SDN产品相比，OVN对OpenvSwitch 及OpenStack有更好的兼容性和性能
 
+OVN, the Open Virtual Network, is an open source project that was originally developed by the Open vSwitch (OVS) team at Nicira.
 
+It complements the existing capabilities of OVS and provides virtual network abstractions, such as virtual L2 and L3 overlays, security groups, and DHCP services. Just like OVS, OVN was designed to support highly scalable and production-grade implementations. It provides an open approach to virtual networking capabilities for any type of workload on a virtualised platform (virtual machines and containers) using the same API.
+
+OVN gives admins the control over network resources by connecting groups of VMs or containers into private L2 and L3 networks, quickly, programmatically, and without the need to provision VLANs or other physical network resources.
 
 #### OVN架构： man
 
@@ -749,6 +759,43 @@ OVN逻辑流表会由ovn-northd分发给每台机器的ovn-controller，然后ov
        |                               |     |                               |
        +-------------------------------+     +-------------------------------+
 ```
+
+从图表的最上面开始，主要有：
+
+- **云管系统(Cloud Management System)**: 即最上面的部分
+
+- **OVN/CMS 插件（Plugin）**：插件是用作OVN接口的CMS组件。在`OpenStack`中，就是一个`Neutron插件`。
+  插件的主要目的就是将CMS的逻辑网络配置概念（以CMS可识别的特定格式存储在CMS的配置数据库中），转换为OVN可以理解的中间格式。
+
+  此组件必须是CMS特定的，因此，需要为每个与OVN集成的CMS开发一个新插件。上图中此组件下面的所有组件都是独立于CMS的。
+
+- **OVN北向数据库（Northbound Database）**：接收OVN/CMS插件传递的逻辑网络配置的中间表示。
+  数据库模式与CMS中使用的概念`阻抗匹配（impedance matched）`，因此它直接支持逻辑交换机、路由器、ACL等概念。详见ovn nb。
+
+  OVN北向数据库有两个客户端：它上面的`OVN/CMS插件`还有它下面的`ovn-northd`
+
+- **ovn-northd**: 它上连OVN北向数据库，下连OVN南向数据库。
+  它将从北向数据库中获得的传统网络概念中的逻辑网络配置，转换为它下面的南向数据库所能理解的`逻辑数据路径流`（logical datapath flow）。
+
+- **OVN南向数据库（Southbound Database）**：这是本系统的中心。
+  它的客户端(client)包括其上的ovn-northd，以及其下每个传输节点上的`ovn-controller`。
+
+  OVN南向数据库包含三种数据：
+
+  - **物理网络(Physical Network (PN))表**：指明如何访问hypervisor和其他节点
+  - **逻辑网络(Logical Network (LN))表**：用`逻辑数据路径流（logical datapath flows）`来描述逻辑网络，
+  - **绑定表**：将逻辑网络组件的位置链接到物理网络
+
+  OVN南向数据库的性能必须随着传输节点的变化而变化。这就需要在遇到瓶颈的时候在`ovsdb-server`上进行一些工作。
+  可能需要引入集群来提升可用性。
+
+其余组件将被复制到每个虚拟机监控程序（hypervisor）上：
+
+- **ovn-controller** ：是每个hypervisor和软件网关上的agent。
+  - 北向而言，它连接到南向数据库来获取OVN的配置及状态，并用hypervisor的状态填充绑定表中的PN表和Chassis列。
+  - 南向而言，它作为OpenFlow controller连接到 ovs-vswitchd 来控制网络流量 ，
+    并连接到本地`ovsdb-server`来监控和控制Open vSwitch的配置。
+- **ovs-vswitchd 和 ovsdb-server**：Open vSwitch的传统组件。
 
 OVN引入了两个全新的OVSDB，
 
@@ -813,6 +860,10 @@ ovn-controller - Open Virtual Network local controller
 
 ovn-controller is the local controller daemon for OVN, the Open Virtual Network. It connects up to the OVN Southbound database over the OVSDB protocol, and down to the Open vSwitch database  over the OVSDB protocol and to ovs-vswitchd(8) via OpenFlow. **Each hypervisor and software gateway in an OVN deployment runs its own independent copy of ovn-controller**; thus, ovn-controller’s downward connections are machine-local and do not run over a physical network.
 
+ovn-controller是每个hypervisor和软件网关上的OVN代理。北向，它连接到OVN南行数据库以了解OVN配置和状态，并把hypervisor的状态填充绑定表中的Chassis列以及PN表。南向，它连接到ovs-vswitchd作为OpenFlow控制器用于控制网络通信，并连接到本地ovsdb-server以允许它监视和控制Open vSwitch的配置。
+
+ovs-vswitchd和ovsdb-server是标准的Open vSwitch组件。
+
 运行在每台机器上的本地SDN控制器，类似于kubelet，负责和中心控制节点通信获取整个集群的网络信息，并更新本机的流量规则。ovs-vswitchd 和 ovsdb-server 可以理解为单机的docker 负责单机虚拟网络的真实操作。
 
 ovn-controller 是 OVN 里面的 agent，类似于 neutron 里面的 ovs-agent，它也是运行在每个 HV (Hypervisor)上面，北向，ovn-controller 会把物理网络的信息写到 Southbound DB 里面，南向，它会把 Southbound DB 里面存的一些数据转化成 Openflow flow 配到本地的 OVS table 里面，来实现报文的转发。
@@ -873,9 +924,40 @@ end
 
 HV是Hypervisor ...
 
+##### VIF生命周期
+
+https://www.dounaite.com/article/62cfff19f4ab41be487d8a7a.html
+
+hypervisor上的VIF是连接到在该hypervisor上直接运行的虚拟机或容器的虚拟网络接口（这与运行在虚拟机内的容器的接口不同）
+
+1. 当CMS管理员使用CMS用户界面或API创建新的VIF并将其添加到交换机（由OVN作为逻辑交换机实现的交换机）时，VIF的生命周期开始。CMS更新其自己的配置，主要包括将VIF唯一的持久标识符vif-id和以太网地址mac相关联。
+2. CMS插件通过向Logical_Switch_Port表添加一行来更新OVN北向数据库以包括新的VIF信息。在新行中，名称是vif-id，mac是mac，交换机指向OVN逻辑交换机的Logical_Switch记录，而其他列被适当地初始化。
+3. ovn-northd收到OVN北向数据库的更新。然后通过添加新行到OVN南向数据库Logical_Flow表中反映新的端口来对OVN南向数据库进行相应的更新，例如，添加一个流来识别发往新端口的MAC地址的数据包应该传递给它，并且更新传递广播和多播数据包的流以包括新的端口。它还在“绑定”表中创建一个记录，并填充除识别chassis列之外的所有列。
+4. 在每个hypervisor上，ovn-controller接收上一步ovn-northd在Logical_Flow表所做的更新。但只要拥有VIF的虚拟机关机，ovn-controller也无能为力。例如，它不能发送数据包或从VIF接收数据包，因为VIF实际上并不存在于任何地方。
+5. 最终，用户启动拥有该VIF的VM。在VM启动的hypervisor上，hypervisor与Open vSwitch（IntegrationGuide.rst中所描述的）之间的集成是通过将VIF添加到OVN集成网桥上，并在external_ids：iface-id中存储vif-id，以指示该接口是新VIF的实例。（这些代码在OVN中都不是新功能;这是已经在支持OVS的虚拟机管理程序上已经完成的预先集成工作。）
+6. 在启动VM的hypervisor上，ovn-controller在新的接口中注意到external_ids：iface-id。作为响应，在OVN南向数据库中，它将更新绑定表的chassis列中链接逻辑端口从external_ids：iface-id到hypervisor的行。之后，ovn-controller更新本地虚拟机hypervisor的OpenFlow表，以便正确处理去往和来自VIF的数据包。
+7. 一些CMS系统，包括OpenStack，只有在网络准备就绪的情况下才能完全启动虚拟机。为了支持这个功能，ovn-northd发现Binding表中的chassis列的某行更新了，则通过更新OVN北向数据库的Logical_Switch_Port表中的up列来向上指示这个变化，以指示VIF现在已经启动。如果使用此功能，CMS则可以通过允许VM执行继续进行后续的反应。
+8. 在VIF所在的每个hypervisor上，ovn-controller注意到绑定表中完全填充的行。这为ovn-controller提供了逻辑端口的物理位置，因此每个实例都会更新其交换机的OpenFlow流表（基于OVN数据库Logical_Flow表中的逻辑数据路径流），以便通过隧道正确处理去往和来自VIF的数据包。
+9. 最终，用户关闭拥有该VIF的VM。在VM关闭的hypervisor中，VIF将从OVN集成网桥中删除。
+10. 在VM关闭的hypervisor上，ovn-controller注意到VIF已被删除。作为响应，它将删除逻辑端口绑定表中的Chassis列的内容。
+11. 在每个hypervisor中，ovn-controller都会注意到绑定表行中空的Chassis列。这意味着ovn-controller不再知道逻辑端口的物理位置，因此每个实例都会更新其OpenFlow表以反映这一点。
+12. 最终，当VIF（或其整个VM）不再被任何人需要时，管理员使用CMS用户界面或API删除VIF。CMS更新其自己的配置。
+13. CMS插件通过删除Logical_Switch_Port表中的相关行来从OVN北向数据库中删除VIF。
+14. ovn-northd收到OVN北向数据库的更新，然后相应地更新OVN南向数据库，方法是从OVN南向d数据库Logical_Flow表和绑定表中删除或更新与已销毁的VIF相关的行。
+15. 在每个hypervisor上，ovn-controller接收在上一步中的Logical_Flow表更新并更新OpenFlow表。尽管可能没有太多要做，因为VIF已经变得无法访问，它在上一步中从绑定表中删除。
+
 ##### OVN Chassis
 
- Chassis 是 OVN 新增的概念，Chassis 是HV/VTEP 网关。Chassis 的信息保存在 Southbound DB 里面，由 ovn-controller/ovn-controller-vtep 来维护。
+`Chassis` 是 `OVN` 新增的概念，`OVS` 里面没有这个概念，`Chassis` 可以是 `HV`，也可以是 `VTEP` 网关（网络硬件设备）。 `Chassis` 的信息保存在 `Southbound DB` 里面，由 `ovn-controller/ovn-controller-vtep` 来维护。
+
+以 `ovn-controller` 为例，当 `ovn-controller` 启动的时候，它去本地的数据库 `Open_vSwitch` 表里面读取`external_ids:system_id`，`external_ids:ovn-remote`，`external_ids:ovn-encap-ip` 和`external_ids:ovn-encap-type`的值，然后它把这些值写到 `Southbound DB` 里面的表 `Chassis` 和表 `Encap` 里面：
+
+- `external_ids:system_id`表示 `Chassis` 名字
+- `external_ids:ovn-remote`表示 `Sounthbound DB` 的 `IP` 地址
+- `external_ids:ovn-encap-ip`表示 `tunnel endpoint IP` 地址，可以是 `HV` 的某个接口的 `IP` 地址
+- `external_ids:ovn-encap-type`表示 `tunnel` 封装类型，可以是 `VXLAN/Geneve/STT`
+
+`external_ids:ovn-encap-ip`和`external_ids:ovn-encap-type`是一对，每个 `tunnel IP` 地址对应一个 `tunnel` 封装类型，如果 `HV` 有多个接口可以建立 `tunnel`，可以在 `ovn-controller` 启动之前，把每对值填在 `table Open_vSwitch` 里面。
 
 ##### OVN Tunnel
 
@@ -973,6 +1055,10 @@ $ ovs-vsctl add-br br0 -- set Bridge br0 datapath_type=netdev
 Note that you must specify the `datapath_type` to be `netdev` when creating a bridge, otherwise you will get an error like ***ovs-vsctl: Error detected while setting up ‘br0’\***.
 
 #### OVN Logical flows
+
+You can use the `ovn-nbctl` utility to see an overview of the logical topology.
+
+The `ovn-sbctl` utility can be used to see into the state stored in the `OVN_Southbound` database. 
 
 Here is how north-south DB flow population works:
 
@@ -1287,3 +1373,4 @@ https://github.com/eBay/go-ovn
 5. https://feisky.gitbooks.io/sdn/content/ovs/ovn-kubernetes.html
 6. https://www.sdnlab.com/20693.html
 7. https://arthurchiao.art/blog/ovs-deep-dive-4-patch-port/
+8. https://www.cnblogs.com/laolieren/p/ovn-architecture.html
