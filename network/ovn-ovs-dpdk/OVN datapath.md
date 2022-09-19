@@ -478,7 +478,7 @@ table=33, priority=100,reg15=0xfffe,metadata=0x3
 table=65, priority=100,reg15=0x1,metadata=0x3 actions=output:15
 ```
 
-As we’ve just seen, OpenFlow repeats the logical topology by interconnecting logical datapaths of switches and routers with virtual point-to-point patch cables. This may seem like an unnecessary modelling element with a potential for a performance impact. However, when flows get installed in kernel datapath, these patch ports [do not exist](https://galsagie.github.io/2015/11/23/ovn-l3-deepdive), which means that there isn’t any performance impact on packets in fastpath.
+As we’ve just seen, OpenFlow repeats the logical topology by interconnecting logical datapaths of switches and routers with virtual point-to-point patch cables. This may seem like an unnecessary modelling element with a potential for a performance impact. However, when flows get installed in kernel datapath, these patch ports do not exist, which means that there isn’t any performance impact on packets in fastpath.
 
 ## Physical network - GENEVE overlay
 

@@ -1,20 +1,127 @@
 ## [LGTM] OVN Chassis
 
+## LGTM
+
+https://www.mankier.com/7/ovn-architecture
+
+
+
+## What is Chassis:+1:
+
+Hypervisors and gateways are together called *transport node* or ***chassis***.
+
+Each chassis has a bridge mapping for one of the **localnet** physical networks only.
+
+An OVN *logical network* is a network implemented in software that is insulated from physical (and thus virtual) networks by tunnels or other encapsulations. 
+
+```bash
+$ ovn-sbctl show
+Chassis local_chassis
+    hostname: TJ-UNISTACK-YFB-SEC01
+    Encap geneve
+        ip: "127.0.0.1"
+        options: {csum="true"}
+$ ovn-sbctl chassis-add fakechassis geneve 127.0.0.1
+$ ovn-sbctl show
+Chassis fakechassis
+    Encap geneve
+        ip: "127.0.0.1"
+        options: {csum="true"}
+Chassis br-test
+    Encap geneve
+        ip: "172.21.170.84"
+        options: {csum="true"}
+
+
+$ ovn-nbctl ls-add sw0
+$ ovn-nbctl lsp-add sw0 sp0
+$ ovn-nbctl show
+    switch d02ad16a-2b74-434e-a26f-aa45ad698b4e (sw0)
+        port sp0
+$ ovn-sbctl show
+Chassis fakechassis
+    Encap geneve
+        ip: "127.0.0.1"
+        options: {csum="true"}
+Chassis br-test
+    Encap geneve
+        ip: "172.21.170.84"
+        options: {csum="true"}
+        
+#  bind logical port PORT to CHASSIS
+$ ovn-sbctl lsp-bind sp0 fakechassis
+$ ovn-sbctl show
+Chassis fakechassis
+    Encap geneve
+        ip: "127.0.0.1"
+        options: {csum="true"}
+    # new binding
+    Port_Binding "sp0"
+Chassis br-test
+    Encap geneve
+        ip: "172.21.170.84"
+        options: {csum="true"}
+```
+
+
+
+### localnet
+
+  Introduce a new logical port type called "localnet".  A logical port with this type also has an option called "network_name".  A "localnet" logical port represents a connection to a network that is locally accessible from each chassis running ovn-controller.  ovn-controller will use the ovn-bridge-mappings configuration to figure out which patch port on br-int should be used for this port.
+
+https://patchwork.ozlabs.org/project/openvswitch/patch/1441298701-32163-3-git-send-email-rbryant@redhat.com/
+
+### gateway
+
+Gateways provide limited connectivity between logical networks and physical ones.
+
+#### vtep gateway
+
+A `VTEP gateway` connects an OVN logical network to a physical (or virtual) switch that implements the OVSDB VTEP schema that accompanies Open vSwitch. (The `VTEP gateway` term is a misnomer, since a VTEP is just a VXLAN Tunnel Endpoint, but it is a well established name.) 
+
+> misnomer: a name that does not suit what it refers to, or the use of such a name.
+>
+> vtep gateway，名字起的多少有点问题，它就是一个vxlan tunnel endpoint，用来连接ovn和physical switch.
+
+The main intended use case for VTEP gateways is to attach physical servers to an OVN logical network using a physical top-of-rack switch that supports the OVSDB VTEP schema
+
+#### L2 gateway
+
+A L2 gateway simply attaches a designated physical L2 segment available on some chassis to a logical network. The physical network effectively becomes part of the logical network.
+
+To set up a L2 gateway, the CMS adds an **l2gateway** LSP to an appropriate logical switch, setting LSP options to name the chassis on which it should be bound. **ovn-northd** copies this configuration into a southbound **Port_Binding** record. On the designated chassis, **ovn-controller** forwards packets appropriately to and from the physical segment.
+
+L2 gateway ports have features in common with **localnet** ports. However, with a **localnet** port, the physical network becomes the transport between hypervisors. With an L2 gateway, packets are still transported between hypervisors over tunnels and the **l2gateway** port is only used for the packets that are on the physical network. The application for L2 gateways is similar to that for VTEP gateways, e.g. to add non-virtualized machines to a logical network, but L2 gateways do not require special support from top-of-rack hardware switches.
+
+#### L3 gateway router
+
+OVN supports L3 gateway routers, which are OVN logical routers that are implemented in a designated chassis. Gateway routers are typically used between distributed logical routers and physical networks. The distributed logical router and the logical switches behind it, to which VMs and containers attach, effectively reside on each hypervisor.
+
+### Hypervisors 
+
+A hypervisor, also known as a virtual machine monitor or VMM, is software that creates and runs virtual machines (VMs). 
+
 ## Chassis作用
 
-The ovn-chassis charm provides the Open Virtual Network (OVN) local controller, Open vSwitch Database and Switch. It is used in conjunction with the [ovn-central](https://jaas.ai/ovn-central) charm.
+`Chassis` 可以是 `HV`，也可以是 `VTEP` 网关（vxlan tunnel endpoint for Hybird Overlay）。 `Chassis` 的信息保存在 `Southbound DB` 里面，由 `ovn-controller/ovn-controller-vtep` 来维护。
 
-Open vSwitch bridges for integration, external Layer2 and Layer3 connectivity is managed by the charm.
+* ovn-controller:  ovn-controller is the local controller daemon for OVN, the Open Virtual Network. It connects up to the OVN Southbound database vSwitch database  over the OVSDB  protocol and to ovs-vswitchd **via OpenFlow.**  
 
-`Chassis` 可以是 `HV`，也可以是 `VTEP` 网关。 `Chassis` 的信息保存在 `Southbound DB` 里面，由 `ovn-controller/ovn-controller-vtep` 来维护。
+   Each hypervisor and  software gateway in an OVN deployment runs its own independent copy of ovn-controller;
 
-## Chassis ：br-int,下面是谁的机翻
+* ovn-controller-vtep:   ovn-controller-vtep is the local controller daemon in OVN, the Open Virtual Network, for VTEP enabled physical switches. It connects up to the OVN Southbound database over the OVSDB protocol, and down to the VTEP database.
+   over the OVSDB protocol.
 
-The customary name for the integration bridge is  br-int,  but  another name may be used.
+### vtep
 
+vtep - hardware_vtep database schema
+This schema specifies relations that a VTEP can use to integrate physical ports into logical switches maintained by a network virtualization controller such as NSX
 
+## Chassis ：br-int
 
-Each chassis in an OVN deployment  must  be  configured  with  an  Open vSwitch  bridge dedicated for OVN’s use, called the integration bridge.System startup  scripts  may  create  this  bridge  prior  to  starting
+Each chassis has a bridge mapping for one of the **localnet** physical networks only.
+
+Each chassis in an OVN deployment  must  be  configured  with  an  Open vSwitch  bridge dedicated for OVN’s use, called the **integration bridge**.System startup  scripts  may  create  this  bridge  prior  to  starting
 **ovn-controller**  if desired. If this bridge does not exist when ovn-controller starts, it will be created automatically with the default  configuration  suggested  below.  The  ports  on  the  integration  bridge
 include:
 
@@ -29,46 +136,19 @@ include:
 Other  ports  should not be attached to the integration bridge. In particular, physical ports attached to the underlay network (as opposed to gateway  ports,  which are physical ports attached to logical networks)
 must not be attached to the integration bridge. Underlay physical ports should instead be attached to a separate Open vSwitch bridge (they need not be attached to any bridge at all, in fact).
 
-OVN部署中的每个Chassis都必须配置一个专门用于ovn的Open vSwitch网桥，称为`集成网桥(integration bridge)`。如果需要，系统启动脚本可以在启动OVN控制器之前创建此网桥。
+The integration bridge should be configured as described below. The effect of each of these settings is documented in [ovs-vswitchd.conf.db(5)](https://www.mankier.com/5/ovs-vswitchd.conf.db):
 
-> System startup scripts add this port to the bridge  prior  to  starting ovn-controller.
+- **fail-mode=secure**
 
-当OVN控制器启动时此网桥不存在的话，就将使用下面建议的默认配置来自动创建它。
+  Avoids switching packets between isolated logical networks before **ovn-controller** starts up. See **Controller Failure Settings** in [ovs-vsctl(8)](https://www.mankier.com/8/ovs-vsctl) for more information.
 
-集成网桥上的端口包括：
+- **other-config:disable-in-band=true**
 
-- 任何机箱上，OVN用来保持逻辑网络连接的隧道（tunnel）端口:
-
-  OVN控制器将添加、更新和删除这些隧道端口。
-
-- 在hypervisor中，任何要连接到逻辑网络的VIF:
-  hypervisor本身，或者vSwitch和hypervisor之间的集成（在integrationguide.rst中描述）会负责处理这个问题。
-
-> 这不是OVN的一部分，也不是OVN的新内容；这些都是预存在的集成工作，早已经在支持OVS的 hypervisor上实现了。
-
-- 在网关上，用于逻辑网络连接的物理端口：
-  系统启动脚本在启动ovn控制器之前将此端口添加到网桥。
-  在更复杂的设置中，也可能是是另一个网桥的补丁端口（patch port），而不是物理端口。
-
-其他端口不应连接到集成网桥上。
-尤其是，附加到底层网络（underlay network）的物理端口（与附加到逻辑网络物理端口的网关端口相反）不能连接到集成网桥。
-底层物理端口应该连接到单独的Open vSwitch网桥（事实上，它们根本不需要连接到任何网桥）。
-
-集成网桥应该按照下面描述的方式配置。每个配置的效果都记录在`ovs-vswitchd.conf.db`中：
-
-```mipsasm
-fail-mode=secure
-    避免在OVN控制器启动之前在隔离的逻辑网络之间交换数据包。
-    详细信息请参阅ovs vsctl中的 控制器故障设置。
-    
-other-config:disable-in-band=true
-    抑制集成网桥的带内控制流(in-band  control  flows)。
-    由于OVN使用本地控制器（通过Unix域套接字）而不是远程控制器，所以这样的控制流显然是不常见的。
-    然而，对于同一系统中的某个其他网桥可能有一个带内（in-band）远程控制器，在这种情况下，这可能对带内控制器正常建立的流量进行抑制。
-    请参阅有关文档以获取更多信息。
-```
+  Suppresses in-band control flows for the integration bridge. It would be unusual for such flows to show up anyway, because OVN uses a local controller (over a Unix domain socket) instead of a remote controller. It’s possible, however, for some other bridge in the same system to have an in-band remote controller, and in that case this suppresses the flows that in-band control would ordinarily set up. Refer to the documentation for more information.
 
 The customary name for the integration bridge is  br-int,  but  another name may be used.
+
+
 
 ### port_binding
 
@@ -219,3 +299,18 @@ Chassis "804c7da4-04c8-416e-9420-0345f7335284"
 ```
 
 end
+
+## [Life Cycle of a VTEP gateway](https://www.mankier.com/7/ovn-architecture#Description-Life_Cycle_of_a_VTEP_gateway)
+
+A gateway is a chassis that forwards traffic between the OVN-managed part of a logical network and a physical VLAN, extending a tunnel-based logical network into a physical network.
+
+The steps below refer often to details of the OVN and VTEP database schemas. Please see [ovn-sb(5)](https://www.mankier.com/5/ovn-sb), [ovn-nb(5)](https://www.mankier.com/5/ovn-nb) and [vtep(5)](https://www.mankier.com/5/vtep), respectively, for the full story on these databases.
+
+1. A VTEP gateway’s life cycle begins with the administrator registering the VTEP gateway as a **Physical_Switch** table entry in the **VTEP** database. The **ovn-controller-vtep** connected to this VTEP database, will recognize the new VTEP gateway and create a new **Chassis** table entry for it in the **OVN_Southbound** database.
+2. The administrator can then create a new **Logical_Switch** table entry, and bind a particular vlan on a VTEP gateway’s port to any VTEP logical switch. Once a VTEP logical switch is bound to a VTEP gateway, the **ovn-controller-vtep** will detect it and add its name to the *vtep_logical_switches* column of the **Chassis** table in the **OVN_Southbound** database. Note, the *tunnel_key* column of VTEP logical switch is not filled at creation. The **ovn-controller-vtep** will set the column when the correponding vtep logical switch is bound to an OVN logical network.
+3. Now, the administrator can use the CMS to add a VTEP logical switch to the OVN logical network. To do that, the CMS must first create a new **Logical_Switch_Port** table entry in the **OVN_Northbound** database. Then, the *type* column of this entry must be set to "vtep". Next, the *vtep-logical-switch* and *vtep-physical-switch* keys in the *options* column must also be specified, since multiple VTEP gateways can attach to the same VTEP logical switch. Next, the *addresses* column of this logical port must be set to "unknown", it will add a priority 0 entry in "ls_in_l2_lkup" stage of logical switch ingress pipeline. So, traffic with unrecorded mac by OVN would go through the **Logical_Switch_Port** to physical network.
+4. The newly created logical port in the **OVN_Northbound** database and its configuration will be passed down to the **OVN_Southbound** database as a new **Port_Binding** table entry. The **ovn-controller-vtep** will recognize the change and bind the logical port to the corresponding VTEP gateway chassis. Configuration of binding the same VTEP logical switch to a different OVN logical networks is not allowed and a warning will be generated in the log.
+5. Beside binding to the VTEP gateway chassis, the **ovn-controller-vtep** will update the *tunnel_key* column of the VTEP logical switch to the corresponding **Datapath_Binding** table entry’s *tunnel_key* for the bound OVN logical network.
+6. Next, the **ovn-controller-vtep** will keep reacting to the configuration change in the **Port_Binding** in the **OVN_Northbound** database, and updating the **Ucast_Macs_Remote** table in the **VTEP** database. This allows the VTEP gateway to understand where to forward the unicast traffic coming from the extended external network.
+7. Eventually, the VTEP gateway’s life cycle ends when the administrator unregisters the VTEP gateway from the **VTEP** database. The **ovn-controller-vtep** will recognize the event and remove all related configurations (**Chassis** table entry and port bindings) in the **OVN_Southbound** database.
+8. When the **ovn-controller-vtep** is terminated, all related configurations in the **OVN_Southbound** database and the **VTEP** database will be cleaned, including **Chassis** table entries for all registered VTEP gateways and their port bindings, and all **Ucast_Macs_Remote** table entries and the **Logical_Switch** tunnel keys.

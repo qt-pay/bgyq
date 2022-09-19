@@ -6,6 +6,8 @@
 
 核心还是：半同步复制。
 
+binary log file的好处就是使持久化数据和mysql instance没有关系，只要数据落盘，即使mysql instance is down仍然可以同步mysql数据。
+
 ## 安全配置
 
 `sql_safe_updates=ON`
@@ -51,7 +53,7 @@ SET SESSION sql_log_bin=0;
 恢复完成，启用记录二进制日志
 SET SESSION sql_log_bin=1;
 
-## binlog
+## binlog：落盘后mysql实例挂了也能同步
 
 https://www.cnblogs.com/youzhibing/p/13131485.html
 
@@ -2465,6 +2467,40 @@ Dump线程
 **SQL线程**
 SQL回放线程位于slave实例，主要作用就是读取relay log，并且进行回放操作。其生命周期开始于start slave或者start slave sql_thread,结束于stop slave或者stop slave sql_thread
 
+## 主从 and function：重复执行DDL and DML
+
+`log-bin-trust-function-creators=1`
+
+This variable applies when binary logging is enabled.  If set to 0 (the default), users are not permitted to create or alter stored functions unless they have the SUPER privilege in addition to the CREATE ROUTINE or ALTER ROUTINE privilege. 
+
+在默认情况下mysql会阻止主从同步的数据库function的创建,这会导致我们在导入sql文件时如果有创建function或者使用function的语句将会报错。
+
+修改`my.cnf`配置，重启mysql实例后，执行如下命令，确认是否已开启。Value值为ON表示已开启。
+
+```bash
+mysql -uroot -pXXX -e "show variables like 'log_bin_trust_function_creators';"
+```
+
+在系统部署时候经常有sql提交，然而像ddl，dml文件重复执行则会报错，对表进行操作，需要编写存储过程来进行判断后再进行操作。
+
+```sql
+create procedure add_col_homework() BEGIN
+
+IF EXISTS (SELECT * FROM information_schema.COLUMNS WHERE TABLE_SCHEMA in (select database()) AND table_name='mytable' AND COLUMN_NAME='mycolumn')
+
+THEN
+
+ALTER TABLE `mytable` DROP COLUMN `mycolumn`;
+
+END IF;
+
+END;
+
+call add_col_homework();
+```
+
+
+
 ## 单主N从
 
 流弊啊 Mysql的设计
@@ -2649,6 +2685,30 @@ mysql> show slave status \G
 
 end
 
+#### slave 状态检测
+
+```bash
+## slave正常情况下，SlaveIORunning 和 SlaveSQLRunning 都是Yes
+show slave status\G
+...
+  Slave_IO_Running: Yes
+  Slave_SQL_Running: Yes          
+```
+
+如下，js去ssh到node上查看slave状态
+
+```bash
+    gtidcount+=-1!=_ssh(ip, `/usr/local/mysql/bin/mysql -uroot -p${args.mysql_pass} -e 'show slave status\\G'`,args.ssh_user[index],args.ssh_pass[index]).indexOf("Slave_IO_Running: Yes")?1:0;
+   gtidcount+=-1!=_ssh(ip, `/usr/local/mysql/bin/mysql -uroot -p${args.mysql_pass} -e 'show slave status\\G'`,args.ssh_user[index],args.ssh_pass[index]).indexOf("Slave_SQL_Running: Yes")?1:0;
+
+##　已知两个slave节点，Slave_IO_Running和Slave_SQL_Running都正常的情况是4，所以和4判断
+## 这里硬编码了呢
+4 != gtidcount?redline("Slave status is unhealthy"):greenline("Slave status is healthy");
+
+```
+
+
+
 ### 测试主从复制
 
 ```sql
@@ -2709,11 +2769,17 @@ mysql> show slave status \G
 
 end
 
-### 主从切换
+### 主从切换:手动
 
 #### master宕机
 
 太简单了这样
+
+0> 确保slave已经同步数据完毕
+
+` SHOW PROCESSLIST\G`检测Slave1是否已经应用完从Master读取过来的在relay log中的操作，如果未应用完不能stop slave，否则数据肯定会有丢失。
+
+Slave has read all relay log; waiting for more updates.表示已经同步完成了
 
 1>  在备机上执行STOP SLAVE 和RESET MASTER
 
@@ -2833,6 +2899,68 @@ Show master status \G;
 读写分离： 要解决的是如何在复制集群的不同角色上，去执行不同的SQL
 
 读的负载均衡： 要解决的是具有相同角色的数据库，如何共同分担相同的负载。
+
+### Relication-Manager
+
+可以实现master故障自动切换。
+
+replication-manager提供了自定义脚本的接口，在pre-failover和post-failover阶段都可以自己定义执行脚本，例如你可以在pre-failover阶段通知consul集群摘除write服务，以及发送告警短信等动作；在post-failover阶段通知consul集群重新添加write服务。
+
+#### VIP自动切换
+
+```bash
+# MySQL主库操作
+create user 'rep_monitor'@'%' identified by '123456';
+GRANT RELOAD, PROCESS, SUPER, REPLICATION SLAVE, REPLICATION CLIENT, EVENT ON *.* TO 'rep_monitor'@'%';
+GRANT SELECT ON `mysql`.`event` TO 'rep_monitor'@'%';
+GRANT SELECT ON `mysql`.`user` TO 'rep_monitor'@'%';
+```
+
+在 /etc/replication-manager/cluster.d 下有模版
+
+```bash
+$ vim /etc/replication-manager/config.toml
+[RPtest]  # 集群名称
+title = "MySQL-Monitor"
+db-servers-hosts = "192.168.20.101:3306,192.168.20.102:3306"
+db-servers-prefered-master = "192.168.20.101:3306"
+db-servers-credential = "rep_monitor:123456"
+db-servers-connect-timeout = 1
+replication-credential = "rep_monitor:123456"
+# 故障自动切换
+failover-mode = "automatic"
+# 300s内再次发生故障不切换，防止硬件问题或网络问题
+failover-time-limit=300
+# vip切换脚本
+failover-post-script = "/etc/replication-manager/vip_up.sh"
+
+[Default]
+monitoring-datadir = "/var/lib/replication-manager"
+log-level=1
+log-file = "/var/log/replication-manager.log"
+replication-multi-master = false
+replication-multi-tier-slave = false
+failover-readonly-state = true
+http-server = true
+http-bind-address = "0.0.0.0"
+http-port = "10001"
+
+
+$ ls /etc/replication-manager/ -l
+total 16
+-rw-r--r--  1 root root  257 Sep 15 09:43 check_repm.sh
+drwxr-xr-x  2 root root   27 Sep 15 09:43 cluster.d
+-rwxrwxrwx  1 root root 1660 Sep 15 09:43 config.toml
+-rwxrwxrwx  1 root root  365 Jun 28 20:42 config.toml.sample.tst.include
+drwxr-xr-x  3 root root   25 Sep 15 09:43 k8s
+drwxr-xr-x 13 root root  270 Sep 15 09:43 local
+drwxr-xr-x  4 root root   46 Sep 15 09:43 opensvc
+drwxr-xr-x  3 root root   25 Sep 15 09:43 slapos
+-rwxr-xr-x  1 root root 2747 Sep 15 09:43 vip_up.sh
+
+```
+
+
 
 ### MaxScale
 
@@ -3388,3 +3516,5 @@ MySQL Router是轻量级的中间件，可在您的应用程序与任何后端My
 
 1. https://cloud.tencent.com/developer/article/1862769
 2. https://www.cnblogs.com/weifeng1463/p/13547164.html
+3. https://zhuanlan.zhihu.com/p/196602954
+4. https://blog.csdn.net/weixin_39840733/article/details/113221670

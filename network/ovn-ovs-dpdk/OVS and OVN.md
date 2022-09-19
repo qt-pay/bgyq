@@ -45,7 +45,7 @@ L3 VNI与二层VNI是完全不同的。L2 VNI映射的是一个VLAN，或者一�
 
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vxlan-L2-and-L3-traffic-flow.jpg)
 
-### OVS：as Docker
+### OVS：as Docker only is L2 drive
 
 https://arthurchiao.art/blog/ovs-deep-dive-0-overview/
 
@@ -685,11 +685,13 @@ OVN只支持GENEVE和STT作为网络虚拟化协议。这是因为OVN除了24bit
 
 GENEVE能很好的兼容VXLAN，因为就算是VXLAN的主场，GENEVE最后还是赢了。但是兼容性并不能解释最后的现象，文章本身也没有分析原因，只是提到了UDP checksum。OVN默认打开了GENEVE上的UDP checksum。因为Linux系统内核的一些优化，使得GENEVE数据包被网卡收到之后，网卡会计算并验证外层UDP的checksum。如果验证通过了，网卡会汇报给系统内核。这样系统内核在解析GENEVE时，将不再计算内层报文的任何checksum。相应的网络数据处理会更快一些。而VXLAN协议规定外层UDP的checksum应该为0，这样外层UDP的checksum就没有办法被验证，而内层报文的checksum需要再计算一遍，相应的网络数据处理就要慢一点。
 
-### OVN：as k8s
+### OVN：as k8s L2 or L3 drive
 
 You can use the `ovn-nbctl` utility to see an overview of the logical topology.
 
 The `ovn-sbctl` utility can be used to see into the state stored in the `OVN_Southbound` database. 
+
+Where Open vSwitch (OVS) provides a virtual switch on a single host, OVN extends this abstraction to span multiple hosts. You can create virtual switches that span many physical nodes, and OVN will take care of creating overlay networks to support this abstraction. While OVS is primarily just a layer 2 device, OVN also operates at layer 3: you can create virtual routers to connect your virtual networks as well a variety of access control mechanisms such as security groups and ACLs.
 
 OVS只能处理single node 流量，而且需要手工配置。OVN是OVS的SDN controller，实现海量ovs nodes流量管理。
 
@@ -722,6 +724,14 @@ The OVN daemons:
 
 - **ovn-northd** converts from the high-level northbound DB to the run-time southbound DB, and generates logical flows based on high-level configurations.
 - **ovn-controller** is a local SDN controller that runs on every host and manages each OVS instance. It registers chassis and VIFs to the southbound DB and converts logical flows into physical flows (i.e., VIF UUIDs to OpenFlow ports). It pushes physical configurations to the local OVS instance through OVSDB and OpenFlow and uses SDN for remote compute location (VTEP). All of the controllers are coordinated through the southbound database.
+
+OVN operates with a pair of databases. The *Northbound* database contains the *logical* structure of your networks: this is where you define switches, routers, ports, and so on.
+
+The *Southbound* database is concerned with the *physical* structure of your network. This database maintains information about which ports are realized on which hosts.
+
+The `ovn-northd` service “translates the logical network configuration in terms of conventional network concepts, taken from the OVN North‐ bound Database, into logical datapath flows in the OVN Southbound Database below it.”
+
+The `ovn-controller` service running on each host connects to the Southbound database and is responsible for configuring OVS as instructed by the database configuration.
 
 OVN逻辑流表会由ovn-northd分发给每台机器的ovn-controller，然后ovn-controller再把它们转换为物理流表。 
 
@@ -882,6 +892,8 @@ ovn-controller是每个hypervisor和软件网关上的OVN代理。
   - 分布式L3路由基于OVS flow实现
 - Logical Flows：逻辑流表，会由ovn-northd分发给每台机器的ovn-controller，然后ovn-controller再把它们转换为物理流表
 
+**ovn-controller** is a local SDN controller that runs on every host and manages each OVS instance. It registers chassis and VIFs to the southbound DB and converts logical flows into physical flows (i.e., VIF UUIDs to OpenFlow ports). It pushes physical configurations to the local OVS instance through OVSDB and OpenFlow and uses SDN for remote compute location (VTEP). All of the controllers are coordinated through the southbound database.
+
 ```bash
                                   CMS
                                    |
@@ -959,7 +971,7 @@ hypervisor上的VIF是连接到在该hypervisor上直接运行的虚拟机或容
 
 `external_ids:ovn-encap-ip`和`external_ids:ovn-encap-type`是一对，每个 `tunnel IP` 地址对应一个 `tunnel` 封装类型，如果 `HV` 有多个接口可以建立 `tunnel`，可以在 `ovn-controller` 启动之前，把每对值填在 `table Open_vSwitch` 里面。
 
-##### OVN Tunnel
+##### OVN Tunnel：支持vxlan
 
   OVN 支持的 tunnel 类型有三种，分别是 Geneve，STT 和 VXLAN。HV 与 HV 之间的流量，只能用 Geneve 和 STT 两种，HV 和 VTEP 网关之间的流量除了用 Geneve 和 STT 外，还能用 VXLAN，这是为了兼容硬件 VTEP 网关（网络Overlay），因为大部分硬件 VTEP 网关只支持 VXLAN。虽然 VXLAN 是数据中心常用的 tunnel 技术，但是 VXLAN header 是固定的，只能传递一个 VNID（VXLAN network identifier），如果想在 tunnel 里面传递更多的信息，VXLAN 实现不了。所以 OVN 选择了 Geneve 和 STT，Geneve 的头部有个 option 字段，支持 TLV 格式，用户可以根据自己的需要进行扩展，而 STT 的头部可以传递 64-bit 的数据，比 VXLAN 的 24-bit 大很多。
 
@@ -974,6 +986,21 @@ hypervisor上的VIF是连接到在该hypervisor上直接运行的虚拟机或容
 OVS 的 tunnel 封装是由 Openflow 流表来做的，所以 ovn-controller 需要把这三个标识符写到本地 HV 的 Openflow flow table 里面，对于每个进入 br-int 的报文，都会有这三个属性，logical datapath identifier 和 logical input port identifier 在入口方向被赋值，分别存在 openflow metadata 字段和 Nicira 扩展寄存器 reg14 里面。报文经过 OVS 的 pipeline 处理后，如果需要从指定端口发出去，只需要把 Logical output port identifier 写在 Nicira 扩展寄存器 reg15 里面。
 
    **OVN tunnel 里面所携带的 logical input port identifier 和 logical output port identifier 可以提高流表的查找效率，OVS 流表可以通过这两个值来处理报文，不需要解析报文的字段。** OVN 里面的 tunnel 类型是由 HV 上面的 ovn-controller 来设置的，并不是由 CMS 指定的，并且 OVN 里面的 tunnel ID 又由 OVN 自己分配的，所以用 neutron 创建 network 时指定 tunnel 类型和 tunnel ID（比如 vnid）是无用的，OVN 不做处理。
+
+##### ovn-controller-vtep
+
+ovn-controller-vtep是可以配置支持OVSDB协议的物理交换机。
+
+a physical switch that connects to an OVN deployment through a simple OVSDB schema.
+
+ovn-controller-vtep retrieves its configuration information from both the ovnsb and the vtep database. 
+
+OVN does support VXLAN for use with ASIC-based top of rack switches, using `ovn-controller-vtep(8)` and the OVSDB VTEP schema described in `vtep(5)`, but this limits the features available from OVN to the subset available from the VTEP schema.
+
+###### vtep
+
+vtep - hardware_vtep database schema
+This schema specifies relations that a VTEP can use to integrate physical ports into logical switches maintained by a network virtualization controller such as NSX
 
 ##### Datapath: forwarding plane
 
