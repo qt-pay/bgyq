@@ -352,7 +352,7 @@ IP in IP是一种把 **IP数据包** 封装进另一个 **IP数据包** 的隧�
 
 bgp模式必须要求node在同一个二层网络，因为它要保证下一跳是k8s node（即bird node,所以calico类似一种Underlay），不然node上没有集群的pod路由信息。
 
-IP-ip-IP相当于起的Tunnel，完成两个calico-node（bird）的直连，因为如果L 2不可达，那么下一跳的Router可能没有Calico的bgp信息，就导致无法通信了。
+IP-ip-IP相当于起的Tunnel，完成两个calico-node（bird）的直连，因为如果L2不可达，那么下一跳的Router可能没有Calico的bgp信息，就导致无法通信了。
 
 
 

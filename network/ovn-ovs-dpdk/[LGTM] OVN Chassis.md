@@ -12,6 +12,10 @@ Hypervisors and gateways are together called *transport node* or ***chassis***.
 
 Each chassis has a bridge mapping for one of the **localnet** physical networks only.
 
+> A **localnet** logical switch port bridges a logical switch to a physical VLAN. A logical switch may have one or more **localnet** ports. 
+>
+> chassis肯定是接入一个物理网络的
+
 An OVN *logical network* is a network implemented in software that is insulated from physical (and thus virtual) networks by tunnels or other encapsulations. 
 
 ```bash
@@ -85,17 +89,143 @@ A `VTEP gateway` connects an OVN logical network to a physical (or virtual) swit
 
 The main intended use case for VTEP gateways is to attach physical servers to an OVN logical network using a physical top-of-rack switch that supports the OVSDB VTEP schema
 
-#### L2 gateway
+#### L2 gateway: ls
 
 A L2 gateway simply attaches a designated physical L2 segment available on some chassis to a logical network. The physical network effectively becomes part of the logical network.
 
-To set up a L2 gateway, the CMS adds an **l2gateway** LSP to an appropriate logical switch, setting LSP options to name the chassis on which it should be bound. **ovn-northd** copies this configuration into a southbound **Port_Binding** record. On the designated chassis, **ovn-controller** forwards packets appropriately to and from the physical segment.
+To set up a L2 gateway, the CMS adds an **L2 gateway** LSP to an appropriate **logical switch**， setting LSP options to name the chassis on which it should be bound. **ovn-northd** copies this configuration into a southbound **Port_Binding** record. On the designated chassis, **ovn-controller** forwards packets appropriately to and from the physical segment.
 
-L2 gateway ports have features in common with **localnet** ports. However, with a **localnet** port, the physical network becomes the transport between hypervisors. With an L2 gateway, packets are still transported between hypervisors over tunnels and the **l2gateway** port is only used for the packets that are on the physical network. The application for L2 gateways is similar to that for VTEP gateways, e.g. to add non-virtualized machines to a logical network, but L2 gateways do not require special support from top-of-rack hardware switches.
+L2 gateway ports have features in common with **localnet** ports. However, with a **localnet** port, the physical network becomes the transport between hypervisors. With an L2 gateway, packets are still transported between hypervisors over tunnels and the **L2 gateway** port is only used for the packets that are on the physical network. The application for L2 gateways is similar to that for VTEP gateways, e.g. to add non-virtualized machines to a logical network, but **L2 gateways do not require special support from top-of-rack hardware switches.**
 
-#### L3 gateway router
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/l2gw-usecase5.png)
 
-OVN supports L3 gateway routers, which are OVN logical routers that are implemented in a designated chassis. Gateway routers are typically used between distributed logical routers and physical networks. The distributed logical router and the logical switches behind it, to which VMs and containers attach, effectively reside on each hypervisor.
+
+
+#### L3 gateway router：lr
+
+Gateway router和logical router的区别就是在创建时绑定了chassis
+
+```bash
+# ovn-nbctl create Logical_Router name=edge1 options:chassis={chassis_uuid}
+# options:chassis={chassis_uuid}指定了虚拟路由器的物理位置，表示和外部通信的实现是在此chassis上面。
+# options:chassis 也表示这样是一个 Gateway Routre
+
+# 查看chassis
+$ ovn-sbctl show
+Chassis fakechassis
+    Encap geneve
+        ip: "127.0.0.1"
+        options: {csum="true"}
+    Port_Binding "sp0"
+Chassis br-test
+    Encap geneve
+        ip: "172.21.170.84"
+        options: {csum="true"}
+# Gateway router
+$ ovn-nbctl create Logical_Router name=edge1 options:chassis=br-test
+df4e9b2f-c30c-4925-a256-ac8b7b16b44d
+$ ovn-nbctl show
+
+#  logical router 
+$ ovn-nbctl lr-add test-r
+$ ovn-nbctl show
+    switch d02ad16a-2b74-434e-a26f-aa45ad698b4e (sw0)
+        port sp0
+    router df4e9b2f-c30c-4925-a256-ac8b7b16b44d (edge1)
+    router 376614cb-bcda-4be8-9385-dc68603a24fe (test-r)
+```
+
+
+
+A gateway router is a logical router that is **bound** to a physical location.
+
+> gateway router 和 logical router都是ovn-nbctl lr-add添加的
+
+Gateway routers are typically used in between distributed  logical  routers  and  physical networks.
+
+an OVN gateway router is centralized on a single host (chassis) 
+
+vn的逻辑路由器是分布式的，这意味着它没有绑定到某个节点上，而是存在于所有节点上的，同时它是通过每个节点的openflow流表来实现的，所有vm之间的东西向流量可以在本节点就能找到目的节点，不用再发送的网络节点处理。
+
+对于一些有状态的服务是有问题的，比如SNAT和DNAT，这些服务需要在同一个节点上实现。为了解决这个问题，引入了网关路由器，其和逻辑路由器的区别是，网关路由器会通过Logical_Router表的选项options:chassis绑定到指定的节点上。
+
+**Gateway routers are typically used in between distributed  logical  routers  and  physical networks.**  The distributed logical router and the logical switches behind it, to which VMs and containers attach, effectively reside on each hypervisor. The **distributed  router**  and the  **gateway  router**  are  connected by another logical switch, sometimes referred to as **a join logical switch.** On the other side, the gateway router  connects  to  another  logical switch that has a localnet port connecting to the physical network.
+
+> Localnet  ports  represent the points of connectivity between logical switches and the physical network. They are implemented as OVS  patch ports  between  the  integration bridge and the separate Open vSwitch bridge that underlay physical ports attach to.
+
+ When  using  gateway  routers, DNAT and SNAT rules are associated with the gateway router, which provides a central location that can handle one-to-many SNAT (aka IP masquerading).
+
+网关路由器，其需要通过单独的switch LSjoin连接到逻辑路由器(多个逻辑路由器可以直接相连，但是网关路由器得通过LSjoin连接)。
+
+环境:
+
+- node1 172.17.42.160/16 – will serve as OVN Central and Gateway Node
+- node2 172.17.42.161/16 – will serve as an OVN Host
+- node3 172.17.42.162/16 – will serve as an OVN Host
+- client 172.18.1.10/16 - physical network node
+
+```bash
+         _________ 
+        |  client | 172.18.1.10/16 Physical Network
+         ---------
+         ____|____ 
+        |  switch | outside
+         ---------
+             |
+         ____|____ 
+        |  router | gw1 port 'gw1-outside': 172.18.1.2/16
+         ---------      port 'gw1-join':    192.168.255.1/24
+         ____|____ 
+        |  switch | join  192.168.255.0/24 
+         ---------  
+         ____|____ 
+        |  router | router1 port 'router1-join':  192.168.255.2/24
+         ---------          port 'router1-ls1': 192.168.100.1/24
+             |
+         ____|____ 
+        |  switch | ls1 192.168.100.0/24
+         ---------  
+         /       \
+ _______/_       _\_______  
+|  vm1    |     |   vm2   |
+ ---------       ---------
+192.168.100.10  192.168.100.11
+```
+
+The following diagram shows a typical situation. One or more logical switches LS1, ..., LSn connect to distributed logical router LR1, which in turn connects through LSjoin to gateway logical router GLR, which also connects to logical switch LSlocal, which includes a **localnet** port to attach to the physical network.
+
+```
+                                LSlocal
+                                   |
+                                  GLR
+                                   |
+                                LSjoin
+                                   |
+                                  LR1
+                                   |
+                              +----+----+
+                              |    |    |
+                             LS1  ...  LSn
+```
+
+To configure an L3 gateway router, the CMS sets **options:chassis** in the router’s northbound **Logical_Router** to the chassis’s name. In response, **ovn-northd** uses a special **l3gateway** port binding (instead of a **patch** binding) in the southbound database to connect the logical router to its neighbors. In turn, **ovn-controller** tunnels packets to this port binding to the designated L3 gateway chassis, instead of processing them locally.
+
+DNAT and SNAT rules may be associated with a gateway router, which provides a central location that can handle one-to-many SNAT (aka IP masquerading). Distributed gateway ports, described below, also support NAT.
+
+##### L-Switch-join的好处
+
+1. L-Router可以通过一个接口对接N个GW-Router。物理场景下节省路由器端口
+
+2. 可以做到配置分离，L-Router只负责vm of different L-Switch的转发
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/ovn-L3-GW-demo.jpg)
+
+When  using  gateway  routers, DNAT and SNAT rules are associated with the gateway router,
+which provides a central location that can handle one-to-many SNAT (aka IP masquerading).
+
+
+
+
 
 ### Hypervisors 
 
@@ -103,19 +233,26 @@ A hypervisor, also known as a virtual machine monitor or VMM, is software that c
 
 ## Chassis作用
 
+OVN网络与外界流量通讯肯定是要过chassis。
+
 `Chassis` 可以是 `HV`，也可以是 `VTEP` 网关（vxlan tunnel endpoint for Hybird Overlay）。 `Chassis` 的信息保存在 `Southbound DB` 里面，由 `ovn-controller/ovn-controller-vtep` 来维护。
 
 * ovn-controller:  ovn-controller is the local controller daemon for OVN, the Open Virtual Network. It connects up to the OVN Southbound database vSwitch database  over the OVSDB  protocol and to ovs-vswitchd **via OpenFlow.**  
 
-   Each hypervisor and  software gateway in an OVN deployment runs its own independent copy of ovn-controller;
+  Each hypervisor and  software gateway in an OVN deployment runs its own independent copy of ovn-controller;
 
 * ovn-controller-vtep:   ovn-controller-vtep is the local controller daemon in OVN, the Open Virtual Network, for VTEP enabled physical switches. It connects up to the OVN Southbound database over the OVSDB protocol, and down to the VTEP database.
-   over the OVSDB protocol.
+  over the OVSDB protocol.
 
-### vtep
+### demo： 业务bond作chassis
 
-vtep - hardware_vtep database schema
-This schema specifies relations that a VTEP can use to integrate physical ports into logical switches maintained by a network virtualization controller such as NSX
+一个HV(OVN主机)有一个chassis绑定了physical NIC，然后将OVN的L2 gateway 或者 L3 gateway都绑定到这个chassis，就可以实现OVN网络和外界网络的通讯了。
+
+当然，这个chassis还可以用于OVN网络中，vm跨node的通讯。
+
+这就是物理机上 业务网的作用了。
+
+
 
 ## Chassis ：br-int
 
@@ -147,6 +284,391 @@ The integration bridge should be configured as described below. The effect of ea
   Suppresses in-band control flows for the integration bridge. It would be unusual for such flows to show up anyway, because OVN uses a local controller (over a Unix domain socket) instead of a remote controller. It’s possible, however, for some other bridge in the same system to have an in-band remote controller, and in that case this suppresses the flows that in-band control would ordinarily set up. Refer to the documentation for more information.
 
 The customary name for the integration bridge is  br-int,  but  another name may be used.
+
+
+
+## *Logical Switch Port Types*
+
+OVN supports a number of kinds of logical switch ports. VIF ports that connect to VMs or containers, described above, are the most ordinary kind of LSP. In the OVN northbound database, VIF ports have an empty string for their **type**. This section describes some of the additional port types.
+
+ports, so properly speaking  one  should  usually  talk  about  logical switch ports or logical router ports. However, an unqualified "logical port" usually refers to a logical switch port.
+
+### VIF
+
+A **router** logical switch port connects a logical switch to a logical router, designating a particular LRP as its peer.
+
+### localnet
+
+A **localnet** logical switch port bridges a logical switch to a physical VLAN. A logical switch may have one or more **localnet** ports. Such a logical switch is used in two scenarios:
+
+- With one or more **router** logical switch ports, to attach L3 gateway routers and distributed gateways to a physical network.
+- With one or more VIF logical switch ports, to attach VMs or containers directly to a physical network. In this case, the logical switch is not really logical, since it is bridged to the physical network rather than insulated from it, and therefore cannot have independent but overlapping IP address namespaces, etc. A deployment might nevertheless choose such a configuration to take advantage of the OVN control plane and features such as port security and ACLs.
+
+When a logical switch contains multiple localnet ports, the following is assumed.
+
+- Each chassis has a bridge mapping for one of the **localnet** physical networks only.
+- To facilitate interconnectivity between VIF ports of the switch that are located on different chassis with different physical network connectivity, the fabric implements L3 routing between these adjacent physical network segments.
+
+Note: nothing said above implies that a chassis cannot be plugged to multiple physical networks as long as they belong to different switches.
+
+### localport
+
+A **localport** logical switch port is a special kind of VIF logical switch port. These ports are present in every chassis, not bound to any particular one. Traffic to such a port will never be forwarded through a tunnel, and traffic from such a port is expected to be destined only to the same chassis, typically in response to a request it received. OpenStack Neutron uses a **localport** port to serve metadata to VMs. A metadata proxy process is attached to this port on every host and all VMs within the same network will reach it at the same IP/MAC address without any traffic being sent over a tunnel. For further details, see the OpenStack documentation for networking-ovn.
+
+### vtep and L2 gateway
+
+LSP types **vtep** and **l2gateway** are used for gateways. See **Gateways**, below, for more information
+
+
+
+## Distributed Gateway Ports：？？？
+
+可以设置多个chassis，并指定chassis的优先级，只有优先级最高的chassis工作，其他chassis作为备份，chassis之间使用bfd检测是否存活。
+
+A *distributed gateway port* is a logical router port that is specially configured to designate one distinguished chassis, called the *gateway chassis*, for centralized processing. A distributed gateway port should connect to a logical switch that has an LSP that connects externally, that is, either a **localnet** LSP or a connection to another OVN deployment (see **OVN Deployments Interconnection**). Packets that traverse the distributed gateway port are processed without involving the gateway chassis when they can be, but when needed they do take an extra hop through it.
+
+The following diagram illustrates the use of a distributed gateway port. A number of logical switches LS1, ..., LSn connect to distributed logical router LR1, which in turn connects through the distributed gateway port to logical switch LSlocal that includes a **localnet** port to attach to the physical network.
+
+```
+                                LSlocal
+                                   |
+                                  LR1
+                                   |
+                              +----+----+
+                              |    |    |
+                             LS1  ...  LSn
+```
+
+**ovn-northd** creates two southbound **Port_Binding** records to represent a distributed gateway port, instead of the usual one. One of these is a **patch** port binding named for the LRP, which is used for as much traffic as it can. The other one is a port binding with type **chassisredirect**, named **cr-***port*. The **chassisredirect** port binding has one specialized job: when a packet is output to it, the flow table causes it to be tunneled to the gateway chassis, at which point it is automatically output to the **patch** port binding. Thus, the flow table can output to this port binding in cases where a particular task has to happen on the gateway chassis. The **chassisredirect** port binding is not otherwise used (for example, it never receives packets).
+
+The CMS may configure distributed gateway ports three different ways. See **Distributed Gateway Ports** in the documentation for **Logical_Router_Port** in [ovn-nb(5)](https://www.mankier.com/5/ovn-nb) for details.
+
+Distributed gateway ports support high availability. When more than one chassis is specified, OVN only uses one at a time as the gateway chassis. OVN uses BFD to monitor gateway connectivity, preferring the highest-priority gateway that is online.
+
+A logical router can have multiple distributed gateway ports, each connecting different external networks. Load balancing is not yet supported for logical routers with more than one distributed gateway port configured.
+
+```bash
+# 设置 Distributed Gateway Ports 的方式之一：
+ovn-nbctl ha-chassis-group-add ha1
+ovn-nbctl ha-chassis-group-add-chassis ha1 master 1
+ovn-nbctl ha-chassis-group-add-chassis ha1 node1 2
+# 465efd10-c0e0-4966-be32-a20b213a2dbc 为 ha1 的uuid，可通过 ovn-nbctl ha-chassis-group-list 查看
+ovn-nbctl set Logical_Router_Port  lr1-lslocal ha_chassis_group=465efd10-c0e0-4966-be32-a20b213a2dbc
+ 
+# 设置 Distributed Gateway Ports 的方式之二：
+#  Set gateway chassis for port. chassis is the name of the chassis. This creates a gateway chassis entry in Gateway_Chassis table.
+ovn-nbctl lrp-set-gateway-chassis lr1-lslocal master 1
+ovn-nbctl lrp-set-gateway-chassis lr1-lslocal node1 2
+```
+
+end
+
+## 连接Overlay and Underlay：chassis:fire:
+
+### lsp-set-address : unknow 
+
+`ovn-nbctl lsp-set-addresses <port_name> unknown`
+
+OVN delivers unicast Ethernet packets whose destination MAC address  is  not in any logical port’s addresses column to ports with address unknown.
+
+### lsp-set-type
+
+Set the type for the logical port. The type must be one of the following:
+
+* (empty string):  A VM (or VIF) interface.
+* router: A connection to a logical router.
+* localnet: A  connection  to  a  locally  accessible  network  from each ovn-controller instance. A logical switch can only have a single  localnet  port  attached. This is used to model direct connectivity to an existing network.
+* localport: A  connection  to  a local VIF. Traffic that arrives on a localport is never forwarded over a tunnel to another chassis. These ports are present on every  chassis  and  have  the  same  address in all of them. This is used to model  connectivity to local services that run on every hypervisor.
+* l2gateway: A connection to a physical network.
+* vtep :  A port to a logical switch on a VTEP gateway.
+
+### lsp-set-options
+
+`ovn-nbctl lsp-set-options l2gateway-chassis=<chassis_name> `
+
+The chassis on which the l2gateway logical port should be bound to. ovn-controller running on the defined chassis will connect this logical port to the physical network.
+
+```xml
+        <column name="options" key="network_name">
+          Required.  The name of the network to which the <code>l2gateway</code>
+          port is connected.  The L2 gateway, via <code>ovn-controller</code>,
+          uses its local configuration to determine exactly how to connect to
+          this network.
+        </column>
+
+        <column name="options" key="l2gateway-chassis">
+          Required. The chassis on which the <code>l2gateway</code> logical
+          port should be bound to. <code>ovn-controller</code> running on the
+          defined chassis will connect this logical port to the physical network.
+        </column>
+
+```
+
+
+
+### ovs mapping network
+
+```xml
+      <column name="options" key="network_name">
+        Required.  <code>ovn-controller</code> uses the configuration entry
+        <code>ovn-bridge-mappings</code> to determine how to connect to this
+        network.  <code>ovn-bridge-mappings</code> is a list of network names
+        mapped to a local OVS bridge that provides access to that network.  An
+        example of configuring <code>ovn-bridge-mappings</code> would be:
+
+        <pre>$ ovs-vsctl set open . external-ids:ovn-bridge-mappings=physnet1:br-eth0,physnet2:br-eth1</pre>
+
+        <p>
+          When a logical switch has a <code>l2gateway</code> port attached,
+          the chassis that the <code>l2gateway</code> port is bound to
+          must have a bridge mapping configured to reach the network
+          identified by <code>network_name</code>.
+        </p>
+      </column>
+```
+
+
+
+官方的nb.xml有说明
+
+https://github.com/ovn-org/ovn/blob/b6e6ef7c470304955f5ded89f24a1f7e49d942de/ovn-nb.xml
+
+### L2 gateway 连接外部网络
+
+L2 gateway就是将一个lsp声明成一个三层接口，类似vlan if，然后将这个vif映射到一个物理网卡。
+
+* ovn-nbctl lsp-set-options {port_name} network_name= {Net_Name}
+* ovs-vsctl set Open_vSwitch . external-ids:ovn-bridge-mappings={Net_Name}:{Port_name}
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/l2-gw-with-external-net.webp)
+
+ens8所在的网络为外部网络。
+ 因为l2gateway端口绑定到了master chassis，所以只在master的br-int通过patch端口和br-ens8互连，用来连接外部网络。
+ 其他chassis上的vm如果想访问外部网络，必须先经过tunnel network发送到master上的br-int，再发给br-ens8来实现。
+
+```bash
+# 创建 logical switch ls1
+ovn-nbctl ls-add ls1
+
+# 添加第一个 logical port ls1-vm1
+ovn-nbctl lsp-add ls1 ls1-vm1
+ovn-nbctl lsp-set-addresses ls1-vm1 00:00:00:00:00:03
+ovn-nbctl lsp-set-port-security ls1-vm1 00:00:00:00:00:03
+
+# 添加第二个 logical port ls1-vm2
+ovn-nbctl lsp-add ls1 ls1-vm2
+ovn-nbctl lsp-set-addresses ls1-vm2 00:00:00:00:00:04
+ovn-nbctl lsp-set-port-security ls1-vm2 00:00:00:00:00:04
+
+# 添加第三个 logical port ls1-l2gateway，类型为 l2gateway，用来连接外部网络
+ovn-nbctl lsp-add ls1 ls1-l2gateway
+ovn-nbctl lsp-set-type ls1-l2gateway l2gateway
+ovn-nbctl lsp-set-addresses ls1-l2gateway unknown
+ovn-nbctl lsp-set-options ls1-l2gateway network_name=externalnet l2gateway-chassis=master
+
+# 因为选项 l2gateway-chassis 指定了 chassis 为 master，所以只在master节点上执行如下命令
+ovs-vsctl add-br br-ens8
+ovs-vsctl add-port br-ens8 ens8
+##  set TBL REC COL[:KEY]=VALUE set COLumn values in RECord in TB
+ovs-vsctl set Open_vSwitch . external-ids:ovn-bridge-mappings=externalnet:br-ens8
+ip link set dev br-ens8 up
+ip addr add 10.10.10.4/24 dev br-ens8
+
+# 在master上创建vm1 namespace
+ip netns add vm1
+ovs-vsctl add-port br-int vm1 -- set interface vm1 type=internal
+ip link set vm1 netns vm1
+ip netns exec vm1 ip link set vm1 address 00:00:00:00:00:03
+ip netns exec vm1 ip addr add 10.10.10.2/24 dev vm1
+ip netns exec vm1 ip link set vm1 up
+# 通过iface-id=ls1-vm1和逻辑端口ls1-vm1绑定
+ovs-vsctl set Interface vm1 external_ids:iface-id=ls1-vm1
+
+# 在node1上创建vm2 namespace
+ip netns add vm2
+ovs-vsctl add-port br-int vm2 -- set interface vm2 type=internal
+ip link set vm2 netns vm2
+ip netns exec vm2 ip link set vm2 address 00:00:00:00:00:04
+ip netns exec vm2 ip addr add 10.10.10.3/24 dev vm2
+ip netns exec vm2 ip link set vm2 up
+# 通过iface-id=ls1-vm2和逻辑端口ls1-vm2绑定
+ovs-vsctl set Interface vm2 external_ids:iface-id=ls1-vm2
+```
+
+
+
+### L3 gateway连接外部网络
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/L3-gw-connect-external-net.webp)
+
+创建两个交换机(ls1和ls2)和一个路由器(lr1)
+
+```bash
+# 创建两个虚拟交换机 ls1 和 ls2
+ovn-nbctl ls-add ls1
+ovn-nbctl ls-add ls2
+# 创建一个虚拟路由器 lr1
+ovn-nbctl lr-add lr1
+
+# 在虚拟路由器 lr1 上添加端口，用来连接虚拟交换机 ls1
+ovn-nbctl lrp-add lr1 lr1-ls1 00:00:00:00:00:01 10.10.10.1/24
+
+# 在虚拟交换机 ls1 上添加端口，用来连接虚拟路由器 lr1
+ovn-nbctl lsp-add ls1 ls1-lr1
+# 端口类型必须为 router
+ovn-nbctl lsp-set-type ls1-lr1 router
+# 设置地址，必须和 lr1-ls1 的一致
+ovn-nbctl lsp-set-addresses ls1-lr1 00:00:00:00:00:01
+# 指定 router-port
+ovn-nbctl lsp-set-options ls1-lr1 router-port=lr1-ls1
+
+# 在虚拟路由器 lr1 上添加端口，用来连接虚拟交换机 ls2
+ovn-nbctl lrp-add lr1 lr1-ls2 00:00:00:00:00:02 10.10.20.1/24
+
+# 在虚拟交换机 ls2 上添加端口，用来连接虚拟路由器 lr1
+ovn-nbctl lsp-add ls2 ls2-lr1
+# 端口类型必须为 router
+ovn-nbctl lsp-set-type ls2-lr1 router
+# 设置地址，必须和 lr1-ls2 的一致
+ovn-nbctl lsp-set-addresses ls2-lr1 00:00:00:00:00:02
+# 指定 router-port
+ovn-nbctl lsp-set-options ls2-lr1 router-port=lr1-ls2
+```
+
+在交换机上ls1和ls2上添加vm接口
+
+```bash
+# 在虚拟交换机 ls1 上添加两个端口，指定 mac 和 ip(10.10.10.0/24网段)，用来连接vm
+ovn-nbctl lsp-add ls1 ls1-vm1
+ovn-nbctl lsp-set-addresses ls1-vm1 "00:00:00:00:00:03 10.10.10.2"
+ovn-nbctl lsp-set-port-security ls1-vm1 "00:00:00:00:00:03 10.10.10.2"
+
+ovn-nbctl lsp-add ls1 ls1-vm2
+ovn-nbctl lsp-set-addresses ls1-vm2 "00:00:00:00:00:04 10.10.10.3"
+ovn-nbctl lsp-set-port-security ls1-vm2 "00:00:00:00:00:04 10.10.10.3"
+
+# 在虚拟交换机 ls2 上添加两个端口，指定 mac 和 ip(10.10.20.0/24网段)，用来连接vm
+ovn-nbctl lsp-add ls2 ls2-vm1
+ovn-nbctl lsp-set-addresses ls2-vm1 "00:00:00:00:00:03 10.10.20.2"
+ovn-nbctl lsp-set-port-security ls2-vm1 "00:00:00:00:00:03 10.10.20.2"
+
+ovn-nbctl lsp-add ls2 ls2-vm2
+ovn-nbctl lsp-set-addresses ls2-vm2 "00:00:00:00:00:04 10.10.20.3"
+ovn-nbctl lsp-set-port-security ls2-vm2 "00:00:00:00:00:04 10.10.20.3"
+```
+
+创建四个namespace，模拟四个vm
+
+```bash
+# 在 master 节点上，创建两个namespace，用来模拟两个vm，使用 "iface-id" 指定
+# 这两个vm属于 ls1
+ip netns add vm1
+ovs-vsctl add-port br-int vm1 -- set interface vm1 type=internal
+ip link set vm1 netns vm1
+ip netns exec vm1 ip link set vm1 address 00:00:00:00:00:03
+ip netns exec vm1 ip addr add 10.10.10.2/24 dev vm1
+ip netns exec vm1 ip link set vm1 up
+ip netns exec vm1 ip route add default via 10.10.10.1 dev vm1
+ovs-vsctl set Interface vm1 external_ids:iface-id=ls1-vm1
+
+
+ip netns add vm2
+ovs-vsctl add-port br-int vm2 -- set interface vm2 type=internal
+ip link set vm2 netns vm2
+ip netns exec vm2 ip link set vm2 address 00:00:00:00:00:04
+ip netns exec vm2 ip addr add 10.10.10.3/24 dev vm2
+ip netns exec vm2 ip link set vm2 up
+ip netns exec vm2 ip route add default via 10.10.10.1 dev vm2
+ovs-vsctl set Interface vm2 external_ids:iface-id=ls1-vm2
+
+
+# 在 node1 节点上，创建两个namespace，用来模拟两个vm，使用 "iface-id" 指定这两个vm属于 ls2
+ip netns add vm1
+ovs-vsctl add-port br-int vm1 -- set interface vm1 type=internal
+ip link set vm1 netns vm1
+ip netns exec vm1 ip link set vm1 address 00:00:00:00:00:03
+ip netns exec vm1 ip addr add 10.10.20.2/24 dev vm1
+ip netns exec vm1 ip link set vm1 up
+ip netns exec vm1 ip route add default via 10.10.20.1 dev vm1
+ovs-vsctl set Interface vm1 external_ids:iface-id=ls2-vm1
+
+
+ip netns add vm2
+ovs-vsctl add-port br-int vm2 -- set interface vm2 type=internal
+ip link set vm2 netns vm2
+ip netns exec vm2 ip link set vm2 address 00:00:00:00:00:04
+ip netns exec vm2 ip addr add 10.10.20.3/24 dev vm2
+ip netns exec vm2 ip link set vm2 up
+ip netns exec vm2 ip route add default via 10.10.20.1 dev vm2
+ovs-vsctl set Interface vm2 external_ids:iface-id=ls2-vm2
+```
+
+开始创建网关路由器, 用于连接逻辑路由器的lsjoin和用于连接外部网络的lslocal
+
+```bash
+# 在master节点执行，创建第二个虚拟路由器 lr2,并添加两个虚拟路由器端口
+# ovn-nbctl create Logical_Router name=edge1 options:chassis={chassis_uuid}
+# 其中 options:chassis={chassis_uuid}指定了虚拟路由器的物理位置，表示和外部通信的实现是在此chassis上面。
+# options:chassis 也表示这样是一个 Gateway Routre
+ovn-nbctl create Logical_Router name=lr2 options:chassis=master
+ovn-nbctl lrp-add lr2 lr2-lsjoin 00:00:00:00:00:06 10.10.30.2/24
+ovn-nbctl lrp-add lr2 lr2-lslocal 00:00:00:00:00:07 10.10.40.1/24
+
+# 在master节点执行，创建虚拟交换机 lsjoin，用来连接两个路由器 lr1 和 lr2
+ovn-nbctl ls-add lsjoin
+ovn-nbctl lsp-add lsjoin lsjoin-lr2
+ovn-nbctl lsp-set-type lsjoin-lr2 router
+ovn-nbctl lsp-set-addresses lsjoin-lr2 00:00:00:00:00:06
+ovn-nbctl lsp-set-options lsjoin-lr2 router-port=lr2-lsjoin
+
+# 在master节点执行，在虚拟路由器 lr1 上添加虚拟路由器端口，用来连接 lsjoin
+ovn-nbctl lrp-add lr1 lr1-lsjoin 00:00:00:00:00:05 10.10.30.1/24
+# 在master节点执行，在虚拟交换机 lsjoin 上添加虚拟交换机端口，用来连接 lr1
+ovn-nbctl lsp-add lsjoin lsjoin-lr1
+ovn-nbctl lsp-set-type lsjoin-lr1 router
+ovn-nbctl lsp-set-addresses lsjoin-lr1 00:00:00:00:00:05
+ovn-nbctl lsp-set-options lsjoin-lr1 router-port=lr1-lsjoin
+
+# 在master节点执行，在虚拟路由器 lr1 和 lr2 上添加静态路由
+ovn-nbctl lr-route-add lr2 "10.10.10.0/24" 10.10.30.1
+ovn-nbctl lr-route-add lr1 "0.0.0.0/0" 10.10.30.2
+
+# 在master节点执行，创建虚拟交换机 lslocal，用来连接到外部网络
+ovn-nbctl ls-add lslocal
+ovn-nbctl lsp-add lslocal lslocal-lr2
+ovn-nbctl lsp-set-type lslocal-lr2 router
+ovn-nbctl lsp-set-addresses lslocal-lr2 00:00:00:00:00:07
+ovn-nbctl lsp-set-options lslocal-lr2 router-port=lr2-lslocal
+
+# 创建连接外部网络的switch br-ens8，其中 ovn-bridge-mappings 指定了网络名称和实际网桥的映射关系
+# 必须在网关路由器的选项 options:chassis=master 指定的chassis上执行。本实验指定的chassis为master，
+# 所以下面命令在master上执行。
+ovs-vsctl add-br br-ens8
+ovs-vsctl add-port br-ens8 ens8
+ovs-vsctl set Open_vSwitch . external-ids:ovn-bridge-mappings=externalnet:br-ens8
+ip link set dev br-ens8 up
+ip addr add 10.10.40.2/24 dev br-ens8
+
+# 在master节点执行，在虚拟交换机 lslocal上添加 localnet 类型的端口，并设置 network_name 为 externalnet，
+# externalnet 为 ovn-bridge-mappings 指定的，对应实际网桥 br-ens8
+ovn-nbctl lsp-add lslocal lslocal-localnet
+ovn-nbctl lsp-set-addresses lslocal-localnet unknown
+ovn-nbctl lsp-set-type lslocal-localnet localnet
+ovn-nbctl lsp-set-options lslocal-localnet network_name=externalnet
+```
+
+执行完上面命令后，从ovn网络 lr1上的 vm1 ping 外部网络是不通的，这是因为从外部网络返回的响应报文查不到回程路由，
+ 最终走默认路由，发给其他接口了。解决办法有两个：
+ a. 在外部网络上配置返程的静态路由
+ b. 在网关路由器 lr2 上添加 snat 表项，使lr1上的 vm1 ping报文的源ip修改为外部网络的网段ip
+
+```bash
+    # 在master节点执行
+    ovn-nbctl -- --id=@nat create nat type="snat" logical_ip=10.10.10.0/24 \
+    external_ip=10.10.40.1 -- add logical_router lr2 nat @nat
+```
+
+
 
 
 
@@ -314,3 +836,9 @@ The steps below refer often to details of the OVN and VTEP database schemas. Ple
 6. Next, the **ovn-controller-vtep** will keep reacting to the configuration change in the **Port_Binding** in the **OVN_Northbound** database, and updating the **Ucast_Macs_Remote** table in the **VTEP** database. This allows the VTEP gateway to understand where to forward the unicast traffic coming from the extended external network.
 7. Eventually, the VTEP gateway’s life cycle ends when the administrator unregisters the VTEP gateway from the **VTEP** database. The **ovn-controller-vtep** will recognize the event and remove all related configurations (**Chassis** table entry and port bindings) in the **OVN_Southbound** database.
 8. When the **ovn-controller-vtep** is terminated, all related configurations in the **OVN_Southbound** database and the **VTEP** database will be cleaned, including **Chassis** table entries for all registered VTEP gateways and their port bindings, and all **Ucast_Macs_Remote** table entries and the **Logical_Switch** tunnel keys.
+
+
+
+## 其他引用
+
+https://www.jianshu.com/p/3b1d7b2ddd88
