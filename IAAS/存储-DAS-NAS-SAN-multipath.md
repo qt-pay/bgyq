@@ -605,8 +605,18 @@ UUID进行文件系统挂载时，可通过blkid查看分区UUID，通过UUID挂
 
 ### multipath
 
+配置存储时一定会遇到 multipath 多路径的问题，不同的厂商比如 EMC PowerPath，Veritas VxDMP 等都有独立的多路径软件，而多路径软件的功能也很清晰主要用于 IO 流量负载均衡和故障切换恢复等。在 Linux 环境中 device-mapper-multipath 是一个免费的通用型多路径管理软件，其配置文件也非常简单，主要通过修改 /etc/multipath.conf 来调整。
+
+> 常见的多路径设备管理软件有：
+>
+> - EMC存储厂商的PowerPath
+> - Windows系统的MPIO
+> - HP-UNIX系统的Native_Multi-Path
+> - Linux系统的DM Multipath
+
 服务器端，同一个LUN或WWID或UUID通常对应多个路径，这为服务器访问同一设备提供了多个路径选择，即可提高磁盘设备访问的性能，同时也提供了磁盘设备的高可用性。一般地，一个存储LUN配置路径数的算法为
 LUN绑定某台服务器的`HBA数*存储机头数*光纤交换机数`
+
 通常情况下，存储的一个LUN会绑定服务器的两块HBA，而同一存储服务器里有两台机头，为了冗余也会配备两台交换机，这样，一个LUN的访问路径数为：2\*2\*2=8
 因此，多路径映射后，/dev目录下会有8个/dev/sd*磁盘设备对应同一WWID，对于Lunix自带的multipath，可以通过如下命令查看多路径：
 
@@ -634,6 +644,14 @@ mpath0 (360060e80058e980000008e9800000007)
 
 这说明，已由四条链路sdaa/sdas/sdbk/sdi复合成一条链路，设备名为mpath0。
 ```
+
+#### 解决问题
+
+多路径软件就可以将因路径问题重复识别到了磁盘做一个整合映射，对外提供服务。
+
+**例如，LUN A在通过存储多路径后，在主机上别识别为了/dev/sdc和/dev/sdd，然而sdc和sdd有相同的WWID，所以会将sdc和sdd整合为mpath1磁盘对外提供服务，解决了主机重复识别磁盘的问题。**
+
+
 
 #### 配置维护
 
@@ -899,7 +917,42 @@ iSCSI target是接收iSCSI命令的设备。此设备可以是终端节点，如
 
 每一个iSCSI target通过唯一的IQN来标识，存储阵列控制器上（或桥接器上）的各端口通过一个或多个IP地址来标识。
 
+#### SAN 多路径架构:fire:
 
+对于NAS存储，只要使用IP访问即可，但是对于SAN存储，需要专业的硬件支持，主要是SAN HBA卡和SAN交换机。
+在SAN网络中，大企业为了业务稳定，不因硬件损坏而导致业务停滞，在硬件采购时，往往采用“双份”的策略：2个网卡做绑定、2个CPU、2个风扇、2个HBA卡、2个SAN交换机等等。为了保障存储的高可用性，存储、SAN交换机、服务器架构通常如下：
+
+架构1：
+
+一台服务器拥有2个HBA卡，1台SAN交换机，2个存储控制器控制1台存储，这样就形成了2条链路。
+hba1 <--> SAN <--> cntrlr1 (Storage)
+hba2 <--> SAN <--> cntrlr2 (Storage)
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/multipath-arch-1.png)
+
+架构2：一台服务器拥有2个HBA卡，2台SAN交换机，2个存储控制器控制1台存储（这里把RAID A和RAID B看做是同一台存储上划出来的LUN，RAID A和RAID B使用相同的2个控制器），这样就形成了4台链路，但是对于每个LUN而言，还是2条链路：
+hba1 <--> SAN1 <--> cntrlr1 (RAID A)
+hba1 <--> SAN1 <--> cntrlr1 (RAID B)
+hba2 <--> SAN2 <--> cntrlr2 (RAID A)
+hba2 <--> SAN2 <--> cntrlr2 (RAID B)
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/multipath-arch-2.png)
+
+这种多条链路架构带来的**好处**有：
+
+* 冗余。每个存储都有2条链路，在active/standby模式下，如果HBA卡、SAN交换机、存储控制器出现了单点故障，还有另外一条链路提供服务。
+* 改进的性能。2条链路设置为active/active模式，实现I/O负载平衡。
+
+当然，**坏处**也非常明显：
+通过上面的2种架构可以发现，在SAN网络中，存储分配出来的LUN(可以理解为一个硬盘)，在多条存储链路连接后，主机会将每条链路识别到的LUN当做一个硬盘，如果一个LUN被主机上的2个HBA卡各自识别了一次，那么我们会在主机上看到2个一样大小的硬盘。明明只有一个硬盘，却因链路问题主机识别为了2个硬盘，给磁盘管理带来了麻烦。
+这时候，多路径设备管理软件就应运而生了。每个多路径设备都有一个全球识别符(WWID)，他是一个全球唯一的无法更改的号码，通过WWID，多路径软件就可以将因路径问题重复识别到了磁盘做一个整合映射，对外提供服务。**例如，LUN A在通过存储多路径后，在主机上别识别为了/dev/sdc和/dev/sdd，然而sdc和sdd有相同的WWID，所以会将sdc和sdd整合为mpath1磁盘对外提供服务，解决了主机重复识别磁盘的问题。**
+
+常见的多路径设备管理软件有：
+
+- EMC存储厂商的PowerPath
+- Windows系统的MPIO
+- HP-UNIX系统的Native_Multi-Path
+- Linux系统的DM Multipath
 
 ### NAS
 
@@ -1036,7 +1089,7 @@ LUN不等于Physical Disk/块存储
 
 #### LUN and PV/LV
 
-　那么什么又是存储卷呢？
+那么什么又是存储卷呢？
 
 这要从存储的卷管理器说起。存储卷管理器是操作系统中的一个对象，他主要负责存储块设备的在线管理。
 
@@ -1236,3 +1289,4 @@ The iSCSI Gateway presents a Highly Available (HA) iSCSI target that exports RAD
 9. https://blog.csdn.net/Jacky_Feng/article/details/121579494
 10. https://blog.csdn.net/tuning_optmization/article/details/107759698
 11. https://bbs.huaweicloud.com/blogs/102289
+12. https://www.cnblogs.com/lijiaman/p/13893346.html

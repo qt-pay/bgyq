@@ -5,6 +5,93 @@ VPN的英文全称是“Virtual Private Network”，即“虚拟专用网络”
 VPN = 隧道 + 安全
 
 VPN可以减少企业在公网暴漏端口的风险呢
+### VPN demo：h3c
+
+#### 客户需求
+
+客户要求在交换机管理口(管理口接管理网交换)绑定VPN实例，从而实现从不同地址段远程登录交换机.
+
+#### 需求分析
+
+可以定义一个vpn管理实例，然后把实例绑定到管理口，实现管理的路由表和业务的路由表隔开，同时又打通路由可以访问，配置vpn实例路由这样就可以了。
+
+#### 配置示例
+
+```bash
+## 有管理口：
+ip vpn-instance MGMT
+description MGMT
+interface M-GigabitEthernet0/0/0
+ip binding vpn-instance MGMT
+ip address 192.168.0.1 24
+ip route-static vpn-instance MGMT 0.0.0.0 0  192.168.0.254 description TO-MGMT
+
+## 无管理口：
+ip vpn-instance MGMT
+vlan 100
+int vlan 100
+ip binding vpn-instance Management
+ip address  192.168.0.1   255.255.255.0
+
+## 
+interface g1/0/1
+port access vlan 100
+ip route-static vpn-instance MGMT 0.0.0.0 0  192.168.0.254 description TO-MGMT
+
+## 显示vpn示例
+display ip vpn-instance [ instance-name vpn-instance-name ]
+
+```
+
+#### VPN：路由表隔离
+
+只要端口或vlan都加入到vpn实例，所有涉及到VPN网段的网段路由、snnp、ntp、acl策略里面都需要加入到vpn实例中，不然无法互通。即需要写基于vpn-instance的路由。
+
+端口或vlan加了vpn实例，相当于从iPv4的网络隔离出来进入到了vpn的网络，因此涉及到的配置都需要加入vpn实例。
+
+不同VPN之间的路由隔离通过VPN实例（VPN-instance）实现，VPN实例又称为VRF（Virtual Routing and Forwarding，虚拟路由和转发）实例。
+
+### VRF:tada:
+
+VRF（Virtual Routing and Rorwarding，虚拟路由转发）技术，华为 VRF 又称 VPN Instance（VPN 实例），是种虚拟化技术。
+
+在物理设备上，创建多个 VRF-Instance（VRF 实例，VRF-INST），然后将物理接口划入不同的 VRP-INST 中。
+简单理解是，将整个设备“分割”成多个小设备。
+
+#### 典型应用场景
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vpn-demo-company.png)
+
+某企业网络内有生产和管理两张网络，这两张网络独占接入和汇聚层交换机，共享核心交换机。
+但是，核心交换机上同时连接了生产网络和管理网络的服务器群，两个网段均为192.168.100.0/24网段。
+**需求：**实现生产和管理网络内部的数据通信，同时隔离两张网络之间的通信。
+
+这时，通过两个VPN实例，可以实现这个需求即不同租户可以复用同一个网段、
+
+#### 特性说明
+
+每个 VPN Instance 拥有独立的接口、路由表、路由协议进程、路由转发表项等。
+
+#### 应用场景
+
+常用于 MPLS VPN、Firewall 等一些需要实现隔离的应用场景。VRF 能够实现网络层的隔离。
+
+##### Firewall 
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vrf-in-fw.png)
+
+防火墙虚拟系统，虚拟系统（Virtual System）是在一台物理设备上划分出的多台相互独立的逻辑设备，其中路由虚拟化依靠创建 VPN Instance 来实现。
+
+虚拟系统主要具有以下特点：
+1）资源虚拟化：每个虚拟系统都有独享的资源，包括接口、VLAN、策略和会话等。
+2）路由虚拟化：每个虚拟系统都拥有各自的路由表，相互独立隔离。
+
+##### BGP/MPLS VPN
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vrf-in-vpn.png)
+
+BGP/MPLS IP VPN 是种基于 PE 的 L3VPN 技术。它使用BGP在服务提供商骨干网上发布VPN路由，使用MPLS在服务提供商骨干网上转发VPN报文。
+通过创建 VPN Instance 的方式在PE上区别不同VPN的路由。
 
 ### VPN技术的定义：
 
@@ -52,6 +139,275 @@ VPN具有以下两个基本特征：
   PPTP没有内容加密。
 
 * L2TP+ipSec ：Layer Two Tunneling Protocol
+
+
+
+### MCE设备 VPN
+
+BGP/MPLS VPN以隧道的方式解决了在公网中传送私网数据的问题，但传统的BGP/MPLS VPN架构要求每个VPN实例单独使用一个CE与PE相连。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/MPLS-L3VPN.png)
+
+随着用户业务的不断细化和安全需求的提高，很多情况下**一个私有网络内的用户需要划分成多个VPN**，不同VPN用户间的业务需要完全隔离。此时，为每个VPN单独配置一台CE将加大用户的设备开支和维护成本；而多个VPN共用一台CE，使用同一个路由表项，又无法保证数据的安全性。
+
+使用本系列交换机提供的MCE（Multi-VPN-Instance CE，具备多VPN实例功能的CE）功能，可以有效解决多VPN网络带来的用户数据安全与网络成本之间的矛盾，它使用CE设备本身的VLAN接口编号与网络内的VPN进行绑定，并为每个VPN创建和维护独立的路由转发表（Multi-VRF）。这样不但能够隔离私网内不同VPN的报文转发路径，而且通过与PE间的配合，也能够将每个VPN的路由正确发布至对端PE，保证VPN报文在公网内的传输。
+
+#### 工作原理
+
+左侧私网内有两个VPN站点：站点1和站点2，分别通过MCE设备接入MPLS骨干网，其中VPN1和VPN2的用户，需要分别与远端站点2内的VPN1用户和站点1内的VPN2用户建立VPN隧道。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/MCE-vpn.png)
+
+##### RD
+
+RD(Route-Distinguisher，路由区分符)：RD用来区分本地VRF，该属性仅本地有效。8个字节的RD+4个字节的IPv4地址组成96位VPNv4路由，使不唯一的IPv4地址转化为唯一的VPN-IPv4地址，该VPNv4路由在ISP域内传递（区分），RD给某VRF里面的路由打上标签，进而实现地址的复用而不产生冲突。
+
+##### RT
+
+RT(Route Tagert)：是BGP的扩展团体属性，它分成Import RT和Export RT，分别用于路由的导入、导出策略。
+
+通过配置import和export RT，来控制收发路由。
+
+1.当从VRF表中导出路由时，要用export RT对VRF路由进行标记。
+
+2.当往VRF表中导入路由时，只有所带RT标记与该VRF表中任意一个import RT相符的路由才会被导入到VRF表中。
+
+#### demo
+
+MCE和PE间使用OSPF引入VPN路由组网示意图
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/MCE-VPN-demo.png)
+
+为区分设备，假设MCE系统名为“MCE”，VPN1和VPN2的出口路由器分别名为“VR1”和“VR2”，PE设备系统名为“PE”。
+
+```bash
+# VPN实例配置
+# 在MCE设备上配置VPN实例，名称分别为VPN1和VPN2，RD分别取值为10:1和20:1。
+<MCE> system-view
+[MCE] ip vpn-instance vpn1
+[MCE-vpn-instance-vpn1] route-distinguisher 10:1
+[MCE-vpn-instance-vpn1] quit
+[MCE] ip vpn-instance vpn2
+[MCE-vpn-instance-vpn2] route-distinguisher 20:1
+
+# 创建VLAN10，将端口GigabitEthernet 1/0/10加入VLAN10，并创建Vlan-interface10接口。
+[MCE-vpn-instance-vpn2] quit
+[MCE] vlan 10
+[MCE-vlan10] port GigabitEthernet 1/0/10
+[MCE-vlan10] quit
+[MCE] interface Vlan-interface 10
+
+# 配置Vlan-interface10接口与VPN1实例进行绑定，并配置IP地址为10.214.10.3，掩码为24位。
+[MCE-Vlan-interface10] ip binding vpn-instance vpn1
+[MCE-Vlan-interface10] ip address 10.214.10.3 24
+# 使用类似步骤配置VLAN20，将端口GigabitEthernet 1/0/20加入VLAN20，配置接口与VPN2实例绑定并配置IP地址。
+[MCE-Vlan-interface10] quit
+[MCE] vlan 20
+[MCE-vlan20] port GigabitEthernet 1/0/20
+[MCE-vlan20] quit
+[MCE] interface Vlan-interface 20
+[MCE-Vlan-interface20] ip binding vpn-instance vpn2
+[MCE-Vlan-interface20] ip address 10.214.20.3 24
+[MCE-Vlan-interface20] quit
+
+# 创建VLAN30和VLAN40，并创建相应的VLAN接口，配置IP地址，将VLAN30与VPN1绑定，VLAN40与VPN2绑定。
+
+[MCE] vlan 30
+[MCE-vlan30] quit
+[MCE] interface Vlan-interface 30
+[MCE-Vlan-interface30] ip binding vpn-instance vpn1
+[MCE-Vlan-interface30] ip address 10.214.30.1 30
+[MCE-Vlan-interface30] quit
+[MCE] vlan 40
+[MCE-vlan40] quit
+[MCE] interface Vlan-interface 40
+[MCE-Vlan-interface40] ip binding vpn-instance vpn2
+[MCE-Vlan-interface40] ip address 10.214.40.1 30
+[MCE-Vlan-interface40] quit
+
+# MCE与站点间路由配置
+# MCE与VPN1直接相连，且VPN1内未使用路由协议，因此可以使用静态路由进行配置。
+
+# VR1设备的配置。这里假设VR1为S5500-EI交换机，配置与MCE连接的接口地址为10.214.10.2/24，连接VPN1接口的地址为192.168.0.1/24。向VLAN中增加端口和配置接口IP地址的配置这里省略。
+
+# 在VR1上配置缺省路由，指定出方向报文的下一跳地址为10.214.10.3。
+
+<VR1> system-view
+[VR1] ip route-static 0.0.0.0 0.0.0.0 10.214.10.3 
+
+# 在MCE上指定静态路由，去往192.168.0.0网段的报文，下一跳地址为10.214.10.2，并将此路由与VPN1实例绑定。
+[MCE-Vlan-interface20] quit
+[MCE] ip route-static vpn-instance vpn1 192.168.0.0 16 10.214.10.2
+
+# 显示MCE上为VPN1实例维护的路由信息。
+
+[MCE] display ip routing-table vpn-instance vpn1
+Routing Tables: vpn1
+
+         Destinations : 5        Routes : 5
+
+ 
+
+Destination/Mask    Proto  Pre  Cost         NextHop         Interface
+
+ 
+
+127.0.0.0/8         Direct 0     0            127.0.0.1       InLoop0
+
+127.0.0.1/32        Direct 0     0            127.0.0.1       InLoop0
+
+10.214.10.0/24      Direct 0     0            10.214.10.3     Vlan10
+
+10.214.10.3/32      Direct 0     0            127.0.0.1       InLoop0
+
+192.168.0.0/16      Static 60    0            10.214.10.2     Vlan10
+
+可以看到，已经在MCE上为VPN1指定了静态路由。
+
+# 在VR2上，配置与MCE连接的接口地址为10.214.20.2/24（配置过程略），配置RIP，将网段192.168.10.0和10.214.20.0发布。
+
+<VR2> system-view
+[VR2] rip 20
+[VR2-rip-20] network 192.168.10.0
+[VR2-rip-20] network 10.0.0.0
+
+# VPN2内已经运行了RIP，可以在MCE上配置RIP路由协议，加入到站点内的路由运算中，自动更新路由信息。配置RIP进程为20，关闭路由自动聚合功能，引入OSPF（进程号20）的路由信息，并与VPN2实例进行绑定。
+
+[MCE] rip 20 vpn-instance vpn2
+
+# 将网段10.214.20.0和10.214.40.0发布。
+
+[MCE-rip-20] network 10.0.0.0
+[MCE-rip-20] undo summary
+[MCE-rip-20] import-route ospf
+
+# 在MCE上查看VPN2实例的路由信息。
+
+[MCE-rip-20] display ip routing-table vpn-instance vpn2
+Routing Tables: vpn2
+
+         Destinations : 5        Routes : 5
+
+ 
+
+Destination/Mask    Proto  Pre  Cost         NextHop         Interface
+
+ 
+
+10.214.20.0/24      Direct 0    0            10.214.20.3     Vlan20
+
+10.214.20.3/32      Direct 0    0            127.0.0.1       InLoop0
+
+10.214.40.0/30      Direct 0    0            10.214.40.1     Vlan40
+
+10.214.40.1/32      Direct 0    0            127.0.0.1       InLoop0 
+
+127.0.0.0/8         Direct 0    0            127.0.0.1       InLoop0
+
+127.0.0.1/32        Direct 0    0            127.0.0.1       InLoop0
+
+192.168.10.0/24     RIP    100  1            10.214.20.2     Vlan20 
+
+可以看到，MCE已经通过RIP学习到了VPN2内的私网路由，并与VPN1内的192.168.0.0路由信息分别维护在两个路由表内，有效进行了隔离。
+
+# MCE与PE间路由配置
+# MCE使用GigabitEthernet1/0/3端口连接到PE设备的GigabitEthernet1/0/18端口，需要配置这两个端口为Trunk端口，并允许VLAN30和VLAN40的报文携带Tag通过。
+
+[MCE-rip-20] quit
+[MCE] interface GigabitEthernet 1/0/3
+[MCE-GigabitEthernet1/0/3] port link-type trunk
+[MCE-GigabitEthernet1/0/3] port trunk permit vlan 30 40
+
+# 配置PE的GigabitEthernet1/0/18端口。
+
+<PE> system-view
+[PE] interface GigabitEthernet 1/0/18
+[PE-GigabitEthernet1/0/18] port link-type trunk
+[PE-GigabitEthernet1/0/18] port trunk permit vlan 30 40
+
+# 配置PE的Vlan-interface30和Vlan-interface40接口的IP地址分别为10.214.30.2和10.214.40.2，并将这两个接口分别与VPN1实例和VPN2实例进行绑定，配置步骤这里省略。
+
+# 配置MCE和PE的Loopback0接口，用于指定MCE和PE的Router ID，地址分别为101.101.10.1和100.100.10.1。配置步骤这里省略。
+
+# 配置MCE启动OSPF进程10，配置绑定到VPN1实例，域ID设置为10，并开启OSPF多实例功能。
+
+[MCE-GigabitEthernet1/0/3] quit
+[MCE] ospf 10 router-id 101.101.10.1 vpn-instance vpn1
+[MCE-ospf-10] domain 10
+[MCE-ospf-10] vpn-instance-capability simple
+
+# 在Area0区域发布10.214.30.0网段，并引入VPN1的静态路由。
+
+[MCE-ospf-10] area 0
+[MCE-ospf-10-area-0.0.0.0] network 10.214.30.0 0.0.0.255
+[MCE-ospf-10-area-0.0.0.0] quit
+[MCE-ospf-10] import-route static
+
+# 配置PE启动OSPF进程10，绑定到VPN1实例，域ID为10，开启OSPF多实例功能，并在Area0区域发布10.214.30.0网段。
+
+[PE-GigabitEthernet1/0/18] quit
+[PE] ospf 10 router-id 100.100.10.1 vpn-instance vpn1
+[PE-ospf-10] domain-id 10
+[PE-ospf-10] vpn-instance-capability simple
+[PE-ospf-10] area 0
+[PE-ospf-10-area-0.0.0.0] network 10.214.30.0 0.0.0.255
+
+# 显示PE上的VPN1路由信息。
+
+[PE-ospf-10-area-0.0.0.0] display ip routing-table vpn-instance vpn1
+Routing Tables: vpn1
+
+         Destinations : 6        Routes : 6
+
+ 
+
+Destination/Mask    Proto  Pre  Cost         NextHop         Interface
+
+ 
+
+127.0.0.0/8         Direct 0    0            127.0.0.1       InLoop0
+
+127.0.0.1/32        Direct 0    0            127.0.0.1       InLoop0
+
+10.214.30.0/24      Direct 0    0            10.214.30.1     Vlan30
+
+10.214.30.2/32      Direct 0    0            127.0.0.1       InLoop0
+
+100.100.10.1/32     Direct 0    0            127.0.0.1       InLoop0
+
+192.168.0.0/16      O_ASE  150  1            10.214.30.1     Vlan30 
+
+#VPN1内的静态路由已经引入到MCE与PE间的OSPF路由表中。
+#MCE与PE间配置OSPF进程20，导入VPN2实例的路由信息的过程与上面介绍的配置基本一致，不同的是在MCE的OSPF中配置导入的是RIP路由，这里不再赘述，只以显示信息为例表示导入成功后的结果。
+
+<PE> display ip routing-table vpn-instance vpn2
+display ip routing-table vpn-instance vpn2
+Routing Tables: vpn2
+
+         Destinations : 6        Routes : 6
+
+ 
+
+Destination/Mask    Proto  Pre  Cost         NextHop         Interface
+
+ 
+
+127.0.0.0/8         Direct 0    0            127.0.0.1       InLoop0
+
+127.0.0.1/32        Direct 0    0            127.0.0.1       InLoop0
+
+10.214.40.0/24      Direct 0    0            10.214.40.1     Vlan40
+
+10.214.40.2/32      Direct 0    0            127.0.0.1       InLoop0
+
+200.200.20.1/32     Direct 0    0            127.0.0.1       InLoop0
+
+192.168.10.0/24     O_ASE  150  1            10.214.40.1     Vlan40 
+
+
+```
+
+至此，通过配置，已经将两个VPN实例内的路由信息完整地传播到PE中，配置完成。
 
 ### VPLS网络
 
@@ -614,6 +970,8 @@ QinQ报文在运营商网络中传输时带有双层VLAN Tag：
 
 ##### L3 VPN
 
+在L3VPN中，不同VPN之间的路由隔离通过VPN实例（VPN-instance）实现，VPN实例又称为VRF（Virtual Routing and Forwarding，虚拟路由和转发）实例。
+
 L3VPN为切入点，对VPN进行一个由点到面的介绍。
 
 L3VPN中部署最为广泛的就是MPLS BGP VPN了，MPLS提供公网隧道的转发，BGP提供私网路由的扩散。下图为MPLS BGP VPN的网络结构。
@@ -634,4 +992,4 @@ L3VPN中部署最为广泛的就是MPLS BGP VPN了，MPLS提供公网隧道的�
 
 1. https://bbs.huaweicloud.com/blogs/281600
 2. https://www.bilibili.com/video/BV1Eh411179P/?spm_id_from=333.788.recommend_more_video.-1&vd_source=2795986600b37194ea1056cddb9856fa
-3. 
+3. https://blog.k4nz.com/93455d77477135edab934f318e2d0e60/

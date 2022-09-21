@@ -26,6 +26,16 @@ VLANs use software to emulate separate physical LANs. Each VLAN is thus a separa
 
 3. 交换机如果互联用access模式，不同vlan配置同网段ip是能通讯的，因为Access 模式发送数据包时会去除tag标签。
 
+#### port and vlan and vlanif
+
+只有端口加入VLAN才会VLAN隔离，通过配置的VLANIF实现，跨VLAN访问。
+
+通常，vlan if作为这个vlan的网关，然后借助Router实现不同vlan之间的通讯、
+
+实际机房环境，通过一个mgmt-switch（管理交换机）将全部port设置成一个vlan，然后配置一个vlan if作为网关，上连到其他路由设备（互联网段），实现办公网络通过管理网络访问网络设备。
+
+
+
 #### vlan二层隔离唯一方法
 
 802.1Q Ethernet frame通过VLAN identifier实现基于以太网的数据链路层二层隔离。
@@ -980,7 +990,29 @@ PC1接在Port1，PC2接在Port5，因为这两个port都是untagged port，所�
 
 tagged port则不会将Tag移掉，会将封包交到正确的VLAN。
 
+### Port 二层模式转三层
 
+H3C 三层端口切换命令
+
+命令：port link-mode { bridge | route }
+
+视图：接口视图下
+
+解释：bridge 是桥接也就是二层，route是路由也就是三层
+
+可用条件：交换机必须为三层，但是像 S3600 这些三层没有，貌似是S5800以上才有的。可路由业务的。
+
+很多高手都不知道该命令，原因是不常用此模式，**常常都是把端口化给一个vlan，给vlan配IP地址就可以实现同样的业务。**
+
+华为 三层端口切换命令
+
+命令： undo switchport
+
+视图： 接口视图下
+
+解释： switchport 意思是交换端口，加个undo就是关闭交换机端口，自然就切换为了三层路由端口
+
+可用条件：交换机为三层交换机。
 
 
 
@@ -1049,6 +1081,8 @@ VLAN在分割了二层广播域，也严格地隔离了各个VLAN之间的任何
 
 
 ##### 方法3：三层交换机，VLANIF
+
+哈哈哈哈，端口加入VLAN才能通过配置的VLANIF实现，跨VLAN访问。
 
 三层交换机在原有的二层交换机上增加了路由功能，因为数据没有像单臂路由那样经过物理线路进行路由，很好解决了带宽瓶颈的问题。
 
@@ -1121,6 +1155,8 @@ pc2所发出的数据，由inter0/2所在的pvid vlan20封装vlan20的标记后�
 
 
 #### 不同VLAN中IP(subnet)重复：大问题
+
+借助VRF实现、
 
 公有云提供商的业务要求将实体网络租借给多个不同的用户，这些用户对于网络的要求有所不同，而不同用户租借的网络有很大的可能会出现IP地址、MAC地址的重叠，传统的VLAN仅仅解决了同一链路层网络广播域隔离的问题，而并没有涉及到网络地址重叠的问题，因此需要一种新的技术来保证在多个租户网络中存在地址重叠的情况下依旧能有效通信的技术。
 

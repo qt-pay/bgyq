@@ -2,6 +2,104 @@
 
 VPC: virtual private cloud
 
+### VPC and VPN and VxLAN
+
+VxLAN实现Overlay互通，VPN实现隔离。
+
+VPNs and VLANs are different technologies with some similarities. VPNs connect authorized users to corporate network resources, while VLANs connect geographically separate devices.
+
+VPN实例（VPN-instance）进行隔离，VPN实例又称为VRF（Virtual Routing and Forwarding，虚拟路由和转发）实例。每个VPN实例都相对独立，确保VPN数据的独立性和安全性。那么VPN实例通过什么方式将不同的VPN实例进行隔离呢？主要通过三个方面：
+
+\1.    每个VPN实例维护一张独立的路由表（当然也包括了独立的地址空间）。
+
+\2.    每个VPN实例拥有一组归属于这个VRF的接口的集合，以及有基于这些接口的转发表。
+
+\3.    每个VPN实例拥有一组只用于本VRF的路由协议。
+
+#### vpn+vxlan demo:heavy_check_mark:
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/VPN-VxLAN-demo.png)
+
+实验拓扑如上所示，现在网络中同时存在两个租户，要求在CE3设备上配置集中式网关，实现同租户之间不同[子网](https://so.csdn.net/so/search?q=子网&spm=1001.2101.3001.7020)互通，不同租户之间网络隔离。
+
+##### vpn配置
+
+要实现不同租户网络隔离，可以在CE3上借助VPN实例实现。因此，我们可以给两个租户分别配置VPN实例，以此实现相同租户之前不同子网互通，不同租户之间网络隔离。VPN实例相关配置代码如下：
+
+```bash
+#
+ip vpn-instance A
+ ipv4-family
+  route-distinguisher 100:1
+#
+ip vpn-instance B
+ ipv4-family
+  route-distinguisher 100:2
+```
+
+
+
+##### vbdif子接口配置
+
+在CE3设备上，通过配置Vbdif接口来配置各租户PC的网关，在本实例中，因为要实现不同租户之间网络隔离，因此必须把Vbdif接口划分到各个VPN实例中。Vbdif接口相关配置命令如下
+
+```bash
+# 
+interface Vbdif10
+ ip binding vpn-instance A
+ ip address 192.168.10.254 255.255.255.0
+#
+interface Vbdif20
+ ip binding vpn-instance A
+ ip address 192.168.20.254 255.255.255.0
+#
+interface Vbdif30
+ ip binding vpn-instance B
+ ip address 192.168.10.254 255.255.255.0
+#
+interface Vbdif40
+ ip binding vpn-instance B
+ ip address 192.168.20.254 255.255.255.0
+
+```
+
+##### NVE隧道相关配置命令
+
+在CE3设备上，NVE隧道相关配置命令如下所示
+
+```bash
+#
+interface GE1/0/0
+ undo portswitch
+ undo shutdown
+ ip address 10.1.13.3 255.255.255.0
+#
+interface LoopBack0
+ ip address 3.3.3.3 255.255.255.255
+#
+interface Nve1
+ source 3.3.3.3
+ vni 10 head-end peer-list 1.1.1.1
+ vni 20 head-end peer-list 2.2.2.2
+ vni 30 head-end peer-list 1.1.1.1
+ vni 40 head-end peer-list 2.2.2.2
+#
+ospf 1
+ area 0.0.0.0
+  network 3.3.3.3 0.0.0.0
+  network 10.1.13.0 0.0.0.255
+```
+
+end
+
+
+
+
+
+
+
+
+
 ### VPC疑问:confused:
 
 已知，我的vpc通过VxLAN技术来实现。
@@ -486,7 +584,9 @@ eg：一个虚拟机vm从一个接在网络Overlay上的宿主机上，转移到
 
 宿主机上的GWSwitch承担的是一个默认路由的角色，当Local Router无法查到vm的Subnet Switch时（即该host上没有目标vm所在Subnet的vm instance），流量走向GWSwitch，通过GWSwitch和其他宿主机上的Local Router通讯获取到vm的转发路由。这个GWSwitch是不是叫GWRouter合适点、
 
-### VPC 多租户：VRF
+### VPC 多租户：VPN/VRF
+
+VPC网络中每个子网就是一个vpn实例，vpn中由于有独立的路由转发表，所以不同vpn中可以使用相同的子网、
 
 作为 MP-BGP 的扩展，MP-BGP EVPN 继承了 VPN 通过 VRF 实现的对多租户的支持。
 
@@ -593,6 +693,10 @@ VPC连接器上的路由策略信息，完成vpc 1和vpc 2的互通。
 
 ### VPN and VPC
 
+VPN有独立的VRF（独立路由转发表）所以VPN看起来像一个独立的网络，一个VPN对应一个Subnet。
+
+但是，VPC下可以用N个Subnet。
+
 VPC是Overlay网络，VxLAN-Overlay的建立依赖Tunnel，tunnel就是vpn的体现。
 
 ```bash
@@ -667,3 +771,4 @@ DRNI和堆叠技术的区别
 1. https://www.sdnlab.com/20510.html（全抄）
 1. https://blog.csdn.net/Kangyucheng/article/details/88051969
 1. https://blog.csdn.net/xupeng5200/article/details/123507076
+1. https://blog.csdn.net/weixin_40228200/article/details/119488104
