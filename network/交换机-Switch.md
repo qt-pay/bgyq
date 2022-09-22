@@ -58,6 +58,73 @@
 
 **路由器也都是硬件转发的，但是每个数据包都要路由，每次源到目标的转发路径都是路由算法给出的最优解。**
 
+### 交换机特殊端口
+
+#### MGMT
+
+MGMT是网络管理端口，可以直接用网线连接，登陆进防火墙以网页模式管理
+
+ management网口是专门的管理口，即不跑业务的单独的带外管理接口，可以给其（一般接口编码是M-GigabitEthernet）专门配置一个管理地址用于远程登录管理，
+
+交换机需要一个可以远程连接的管理IP，配置这个IP的端口就是交换机的管理口
+
+> 如果没有专门的MGMT口，则需要VLAN IF来提供一个可访问的IP
+
+```bash
+## 有管理口是一个 三层接口可以直接配置IP
+ip vpn-instance MGMT
+description MGMT
+interface M-GigabitEthernet0/0/0
+ip binding vpn-instance MGMT
+ip address 192.168.0.1 24
+ip route-static vpn-instance MGMT 0.0.0.0 0  192.168.0.254 description TO-MGMT
+
+```
+
+#### console
+
+console调试，超级终端。
+
+PC如何通过console口连接交换机
+
+1. 带Com口的电脑一台，笔记本请准备USB转Com口转换线；
+
+   > 现在有些连接线默认已经是USB+RJ45了
+
+   ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/pc-com-if.png)
+
+   
+
+2. 调试线，一头连接电脑端COM口，一头连接交换机Console接口（可能是RJ45，也可能是COM口）；
+
+3.  确定PC上COM口设备序列号，配置正确的连接参数。
+
+   ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/pc-com.png)
+
+   ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/console-com-config.png)
+
+   
+
+##### MobaXterm连接console
+
+确认设置的连接端口是否正确。有些PC上会有多个串口，每个串口都有对应的编号，在设置连接端口时，需要选择连接的端口对应的编号。
+
+确认PC的串口物理属性是否与设备的Console口属性保持一致，如图所示。在设备Console口属性没有改变的情况下，属性参数为：
+
+- 波特率：9600
+- 数据位：8
+- 奇偶校验位：无
+- 停止位：1
+- 流控：无
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/mobaxterm-console.png)
+
+MobaXterm连接配置的Serial会话，会提示选择对应的COM口，如图所示。如果没有，请检查连线和重启软件。
+
+> 如果不显示COM口，则“计算机管理” --》 “设备管理”更新下COM相关驱动即可。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/mobaxterm-config-console.png)
+
 
 
 ### 交换机基础

@@ -358,7 +358,138 @@ VLAN 10内存在两个网段，分别是192.168.61.0/24和192.168.62.0/24，现�
 
 
 
+### VLANIF:tomato:
 
+The delay after which the VLANIF interface goes Down is set.
+
+By default, the delay is 0 seconds, that is, a VLANIF interface goes Down immediately after the corresponding VLAN goes Down.
+
+Setting a delay after which a VLANIF interface goes Down prevents network flapping caused by status change of the VLANIF interface. This function is also called VLAN damping.
+
+Enable the VLAN damping function on the VLANIF interface. After the last member interface in Up state in the corresponding VLAN goes Down, the VLAN damping-enabled device reports the VLAN Down event to the VLANIF interface after the configured delay. If a member interface in the VLAN goes Up during the delay, the VLANIF interface remains in Up state.
+
+#### vlan if status 
+
+当 vlan IF对应的vlan下没有一个up状态的port时，vlan if is down.
+
+vlan if status只有是up时，配置的IP才能生效。
+
+```bash
+<H3C>
+<H3C>sys
+System View: return to User View with Ctrl+Z.
+## 创建 vlan 10
+[H3C] vlan 10
+[H3C-vlan10]q
+## 切换到vlan IF
+[H3C]interface vlan 100
+The VLAN 100 does not exist. The VLAN must exist before you create the VLAN interface for it.
+##　配置 VLAN IF IP
+[H3C]interface vlan 10
+[H3C-Vlan-interface10]ip address 1.1.1.2 24
+[H3C-Vlan-interface10]dis
+[H3C-Vlan-interface10]display  this
+interface Vlan-interface10
+ ip address 1.1.1.2 255.255.255.0
+#
+return
+## 查看 vlan IF状态
+[H3C-Vlan-interface10]display interface brief
+Brief information on interfaces in route mode:
+Link: ADM - administratively down; Stby - standby
+Protocol: (s) - spoofing
+Interface            Link Protocol Primary IP      Description
+InLoop0              UP   UP(s)    --
+MGE0/0/0             DOWN DOWN     --
+NULL0                UP   UP(s)    --
+REG0                 UP   --       --
+## Status is down
+Vlan10               DOWN DOWN     1.1.1.2
+
+
+## 将GE1/0/1 加入 vlan 10
+[H3C-Vlan-interface10]interface GE1/0/1 
+[H3C-GigabitEthernet1/0/1]port access vlan 10
+## 查看GE1/0/1和VLAN IF状态
+[H3C-GigabitEthernet1/0/1]display interface brief
+Brief information on interfaces in route mode:
+Link: ADM - administratively down; Stby - standby
+Protocol: (s) - spoofing
+Interface            Link Protocol Primary IP      Description
+InLoop0              UP   UP(s)    --
+MGE0/0/0             DOWN DOWN     --
+NULL0                UP   UP(s)    --
+REG0                 UP   --       --
+## down
+Vlan10               DOWN DOWN     1.1.1.2
+
+Brief information on interfaces in bridge mode:
+Link: ADM - administratively down; Stby - standby
+Speed: (a) - auto
+Duplex: (a)/A - auto; H - half; F - full
+Type: A - access; T - trunk; H - hybrid
+Interface            Link Speed   Duplex Type PVID Description
+FGE1/0/53            DOWN 40G     A      A    1
+FGE1/0/54            DOWN 40G     A      A    1
+## GE1/0/1 vlan 已经变成 10，但是由于没有连线此时port status is down.
+GE1/0/1              DOWN auto    A      A    10
+...
+GE1/0/24              DOWN auto    A      A    1
+
+## 此时给GE1/0/1连线，使端口处于up状态
+## switch也有提示 vlan if 状态变成up
+[H3C-GigabitEthernet1/0/1]%Sep 22 21:28:22:716 2022 H3C IFNET/3/PHY_UPDOWN: Physical state on the interface GigabitEthernet1/0/1 changed to up.
+%Sep 22 21:28:22:716 2022 H3C IFNET/5/LINK_UPDOWN: Line protocol state on the interface GigabitEthernet1/0/1 changed to up.
+%Sep 22 21:28:22:716 2022 H3C IFNET/3/PHY_UPDOWN: Physical state on the interface Vlan-interface10 changed to up.
+%Sep 22 21:28:22:716 2022 H3C IFNET/5/LINK_UPDOWN: Line protocol state on the interface Vlan-interface10 changed to up.
+
+[H3C-GigabitEthernet1/0/1]display interface brief%Sep 22 21:28:53:500 2022 H3C STP/6/STP_DETECTED_TC: Instance 0's port GigabitEthernet1/0/1 detected a topology change.
+
+Brief information on interfaces in route mode:
+Link: ADM - administratively down; Stby - standby
+Protocol: (s) - spoofing
+Interface            Link Protocol Primary IP      Description
+InLoop0              UP   UP(s)    --
+MGE0/0/0             DOWN DOWN     --
+NULL0                UP   UP(s)    --
+REG0                 UP   --       --
+## vlan10 status is UP.
+Vlan10               UP   UP       1.1.1.2
+
+Brief information on interfaces in bridge mode:
+Link: ADM - administratively down; Stby - standby
+Speed: (a) - auto
+Duplex: (a)/A - auto; H - half; F - full
+Type: A - access; T - trunk; H - hybrid
+Interface            Link Speed   Duplex Type PVID Description
+FGE1/0/53            DOWN 40G     A      A    1
+FGE1/0/54            DOWN 40G     A      A    1
+GE1/0/1              UP   1G(a)   F(a)   A    10
+...
+GE1/0/24              DOWN auto    A      A    1
+
+## 删除vlan 10
+[H3C-GigabitEthernet1/0/1]undo vlan 10
+## switch 提示 vlan10 状态变成down
+[H3C]%Sep 22 21:29:05:120 2022 H3C IFNET/3/PHY_UPDOWN: Physical state on the interface Vlan-interface10 changed to down.
+
+
+[H3C]display interface brief
+Brief information on interfaces in route mode:
+Link: ADM - administratively down; Stby - standby
+Protocol: (s) - spoofing
+Interface            Link Protocol Primary IP      Description
+InLoop0              UP   UP(s)    --
+MGE0/0/0             DOWN DOWN     --
+NULL0                UP   UP(s)    --
+REG0                 UP   --       --
+```
+
+vlanif , vlan interface只是个虚拟接口，一般在支持802.1q的三层交换机，准确来说，它叫做SVI（Switch Virtual Interface），是一个三层接口，只会在Layer 3交换机上出现，通常用来为某个VLAN提供最后的路由（网关）服务。因为这个接口在交换机上不真实地存在，所以叫做虚接口。
+
+以三层交换机为例，假设24个端口一半是vlan 1,一半是vlan2，然后网关IP又要设在三层端口上，网关应该设在哪个端口上呢？
+
+交换机的接口全是二层接口，是没有办法设置ip地址的。这就需要设置虚拟接口1作为vlan1的三层网关接口，虚拟接口2作为vlan2的三层网关接口，然后与其他设备配置三层互通，这个虚拟接口就叫vlan interface.
 
 ### VLAN and IP Subnetwork：666
 
@@ -900,16 +1031,7 @@ Hybrid端口：
 3、剥离VLAN信息，再发送；
 4、直接发送；
 
-### VLANIF：6
 
-vlanif , vlan interface只是个虚拟接口，一般在支持802.1q的三层交换机，准确来说，它叫做SVI（Switch Virtual Interface），是一个三层接口，只会在Layer 3交换机上出现，通常用来为某个VLAN提供最后的路由（网关）服务。因为这个接口在交换机上不真实地存在，所以叫做虚接口。
-
-```bash
-[Huawei]interface vlanif 111
-Error: The VLAN does not exist.
-```
-
-以三层交换机为例，假设24个端口一半是vlan 1,一半是vlan2。然后网关又要设在三层交换机上，你说网关应该设在哪个端口上呢？下面的接口全是二层接口，是没有办法设置ip地址的。这个时候有一个虚拟的接口这个事就好办了，虚拟接口1作为vlan1的三层网关接口，虚拟接口2作为vlan2的三层网关接口，这个虚拟接口就叫vlan interface.
 
 
 

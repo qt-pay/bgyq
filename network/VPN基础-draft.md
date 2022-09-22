@@ -17,8 +17,12 @@ VPN可以减少企业在公网暴漏端口的风险呢
 
 #### 配置示例
 
+所有接入的switch的mgt-vpn，都写相同的默认路由（都执行网关）即可。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/switch-mgt-gw-and-connect.png)
+
 ```bash
-## 有管理口：
+## 有管理口是一个 三层接口可以直接配置IP
 ip vpn-instance MGMT
 description MGMT
 interface M-GigabitEthernet0/0/0
@@ -26,7 +30,7 @@ ip binding vpn-instance MGMT
 ip address 192.168.0.1 24
 ip route-static vpn-instance MGMT 0.0.0.0 0  192.168.0.254 description TO-MGMT
 
-## 无管理口：
+## 无管理口，需要借助VLAN IF配置IP
 ip vpn-instance MGMT
 vlan 100
 int vlan 100
@@ -93,7 +97,7 @@ VRF（Virtual Routing and Rorwarding，虚拟路由转发）技术，华为 VRF 
 BGP/MPLS IP VPN 是种基于 PE 的 L3VPN 技术。它使用BGP在服务提供商骨干网上发布VPN路由，使用MPLS在服务提供商骨干网上转发VPN报文。
 通过创建 VPN Instance 的方式在PE上区别不同VPN的路由。
 
-### VPN技术的定义：
+### VPN技术的定义：traffic separation
 
 VPN: virtual private network
 
@@ -716,7 +720,7 @@ VPN用来区别不同租户的路由表，因为一个leaf下面可能
 
 接入VPN网络叫拨入...?
 
-### VPN and Tunnel
+### VPN and Tunnel:fire:
 
 A **virtual private network** (**VPN**) extends a private network across a public network, and enables users to send and receive data across shared or public networks as if their computing devices were directly connected to the private network. 
 

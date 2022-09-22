@@ -4,7 +4,7 @@ VPC: virtual private cloud
 
 ### VPC and VPN and VxLAN
 
-VxLAN实现Overlay互通，VPN实现隔离。
+VxLAN Overlay 基于Tunnel实现任意节点互通，VPN实现隔离。
 
 VPNs and VLANs are different technologies with some similarities. VPNs connect authorized users to corporate network resources, while VLANs connect geographically separate devices.
 
@@ -15,6 +15,36 @@ VPN实例（VPN-instance）进行隔离，VPN实例又称为VRF（Virtual Routin
 \2.    每个VPN实例拥有一组归属于这个VRF的接口的集合，以及有基于这些接口的转发表。
 
 \3.    每个VPN实例拥有一组只用于本VRF的路由协议。
+
+#### VRF
+
+traffic separation
+
+VPN的核心就是基于VRF实现流量分离
+
+#### VPN on single DC
+
+The simplest example of VPN is a VLAN. 
+
+一个VPN实例的流量（10.10.1.0/24）传输必然依赖一条链路，如下所示mgt-vpn到网关10.10.1.254依赖的是一根物理网线（一端在switch MGMT port，一端在GW switch port）。
+
+这种物理连线就是Underlay网络，很不灵活。Overlay + VPN就十分灵活了。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/switch-mgt-gw-and-connect.png)
+
+> MGMT-port是三层端口，可以配置IP
+>
+> MGT-GW switch的port默认都是二层端口，不能配置IP
+
+#### OVN on Internet: Overlay Tunnel 延伸VPN
+
+如下，可以通过IPsec-VPN，建立本地数据中心与云上VPC的连接，实现云上和云下的互通。
+
+基于Tunnel + IP sec + VRF 实现Overlay网络可以延伸VPN的连接距离。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vpn-connect-different-dc.png)
+
+
 
 #### vpn+vxlan demo:heavy_check_mark:
 
