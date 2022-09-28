@@ -154,6 +154,8 @@ Allow requests to the local network from system hooks
 
 Requests to these domain(s)/address(es) on the local network will be allowed when local requests from hooks and services are not allowed. IP ranges such as 1:0:0:0:0:0:0:0/124 or 127.0.0.0/28 are supported. Domain wildcards are not supported currently. Use comma, semicolon, or newline to separate multiple entries. The whitelist can hold a maximum of 1000 entries. Domains should use IDNA encoding. Ex: example.com, 192.168.1.1, 127.0.0.0/28, xn--itlab-j1a.com.
 
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/gitlab-outbound.png)
+
 ### docker image 部署gitlab
 
 ```bash

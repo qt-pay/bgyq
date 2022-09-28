@@ -491,6 +491,12 @@ vlanif , vlan interface只是个虚拟接口，一般在支持802.1q的三层交
 
 交换机的接口全是二层接口，是没有办法设置ip地址的。这就需要设置虚拟接口1作为vlan1的三层网关接口，虚拟接口2作为vlan2的三层网关接口，然后与其他设备配置三层互通，这个虚拟接口就叫vlan interface.
 
+#### trunk port vlan if
+
+有点意思。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/trunk-and-vlan-if.png)
+
 ### VLAN and IP Subnetwork：666
 
 IP地址是将数据包带到VLAN 家门口...然后vlan将frame传递给hos。

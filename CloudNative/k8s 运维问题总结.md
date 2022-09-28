@@ -26,3 +26,11 @@ The /proc/sys/net/ipv4/ip_local_port_range defines the local port range that is 
 cncf的cks内容
 
 https://segmentfault.com/a/1190000041175935
+
+### 重启pod
+
+三种方法：
+
+* kubectl rollout restart deployment deployment_name: 要求k8s 1.15 版本以上，支持滚动重启部署。
+* kubectl scale --replicas=0 deployment deployment_name and kubectl scale --replicas=N deployment deployment_name 会业务终端吧，瞬间数量调整到0
+* 修改label selector，将pod label修改，使deployment controller重新创建新的pod，然后手动删除掉旧pod
