@@ -42,7 +42,35 @@ thanks-for-reading-!
 
 Cheers!
 
+### init()
 
+**init函数比较特殊，可以在包里被多次定义。**按定义顺序，顺序执行。
+
+**init函数的主要用途：初始化不能使用初始化表达式初始化的变量**
+
+```go
+var initArg [20]int
+func init() {
+   initArg[0] = 10
+   for i := 1; i < len(initArg); i++ {
+       initArg[i] = initArg[i-1] * 2
+   }
+}
+```
+
+**golang对没有使用的导入包会编译报错，但是有时我们只想调用该包的init函数，不使用包导出的变量或者方法，这时就采用上面的导入方案。**
+
+```go
+import _ "net/http/pprof"
+```
+
+
+
+### main()
+
+一般 `main()`函数写在最前面，然后按函数的调用，开始按顺序声明函数--
+
+`main()`一定要简洁清晰--
 
 ### project-layout
 
@@ -3600,3 +3628,4 @@ end
 12. https://www.jianshu.com/p/eb539203a982
 13. https://www.cnblogs.com/wuyepeng/p/13910678.html
 14. https://blog.csdn.net/whatday/article/details/109771182
+15. https://medium.com/golangspec/init-functions-in-go-eac191b3860a

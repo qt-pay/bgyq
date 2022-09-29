@@ -359,6 +359,15 @@ end
 
 context 会在函数传递间传递。只需要在适当的时间调用 cancel 函数向 goroutines 发出取消信号或者调用 Value 函数取出 context 中的值。
 
+`context`包使用的一些最佳实践建议：
+
+- 不要把context存储在结构体中，而是要显式地进行传递 把`context`作为第一个参数，并且一般都把变量命名为`ctx` 就算是程序允许，也不要传入一个`nil`的`context`，如果不知道是否要用`context`的话，用`context.TODO()`来替代。
+- `context.WithValue()`只用来传递请求范围的值，不要用它来传递可选参数 就算是被多个不同的`goroutine`使用，`context`也是安全的。
+- `context.Background` 只应用在最高等级，作为所有派生 context 的根。
+- `context` 取消是建议性的，这些函数可能需要一些时间来清理和退出。
+- `context.Value`应该很少使用，它不应该被用来传递可选参数。这使得 API 隐式的并且可以引起错误。取而代之的是，这些值应该作为参数传递。
+- `Context` 结构没有取消方法，因为只有派生 `context` 的函数才应该取消 `context`。
+
 ### 参考引用
 
 1. https://leileiluoluo.com/posts/golang-context.html
