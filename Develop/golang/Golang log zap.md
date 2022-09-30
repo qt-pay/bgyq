@@ -342,6 +342,52 @@ logger.Info("failed to fetch URL",
 
 查阅了一下官方zap的输出格式时通过`zapcore.EncoderConfig`对象进行配置的， 所以我们也只需要修改它的一个初始化过程便可， 其中212fb8d8-4e30-44fd-a6f2-d0a9b9799b9d是一个全局的请求id（trace_id）我们可以先忽略这个内容部分，先看怎么改。
 
+NewCore接收三个参数，也是Core的主要组成部分，它们如下图：
+
+```text
+                                 ┌───────────────┐
+                                 │               │
+                                 │               │
+                      ┌─────────►│     Encoder   │
+                      │          │               │
+                      │          │               │
+                      │          └───────────────┘
+┌────────────────┐    │
+│                ├────┘
+│                │               ┌───────────────┐
+│                │               │               │
+│      Core      ├──────────────►│  WriteSyncer  │
+│                │               │               │
+│                ├─────┐         │               │
+└────────────────┘     │         └───────────────┘
+                       │
+                       │
+                       │         ┌───────────────┐
+                       │         │               │
+                       └────────►│  LevelEnabler │
+                                 │               │
+                                 │               │
+                                 └───────────────┘
+```
+
+* Encoder是日志消息的编码器
+* WriteSyncer是支持Sync方法的io.Writer，含义是日志输出的地方，我们可以很方便的通过zap.AddSync将一个io.Writer转换为支持Sync方法的WriteSyncer；
+* LevelEnabler则是日志级别相关的参数。
+
+定制日志的输出格式，重点是修改Encoder。
+
+zap内置了两类编码器，一个是ConsoleEncoder，另一个是JSONEncoder。ConsoleEncoder更适合人类阅读，而JSONEncoder更适合机器处理。zap提供的两个最常用创建Logger的函数：NewProduction和NewDevelopment则分别使用了JSONEncoder和ConsoleEncoder。两个编码器默认输出的内容对比如下：
+
+```json
+// ConsoleEncoder（NewDevelopment创建)
+2021-07-11T09:39:04.418+0800    INFO    zap/testzap2.go:12  failed to fetch URL {"url": "localhost:8080", "attempt": 3, "backoff": "1s"}
+
+// JSONEncoder (NewProduction创建)
+{"level":"info","ts":1625968332.269727,"caller":"zap/testzap1.go:12","msg":"failed to fetch URL","url":"localhost:8080","attempt":3,"backoff":1}
+```
+
+ConsoleEncoder输出的内容跟适合我们阅读而JSONEncoder输出的结构化日志更适合机器/程序处理。
+
 ```go
 const (
 	logTmFmtWithMS = "2006-01-02 15:04:05.000"
@@ -409,7 +455,102 @@ func initCore(l *Log) zapcore.Core {
 }
 ```
 
-end
+或者是只修改JsonEncoder
+
+```go
+var std = New(os.Stderr, InfoLevel, WithCaller(true))
+
+type Option = zap.Option
+
+var (
+    WithCaller    = zap.WithCaller
+    AddStacktrace = zap.AddStacktrace
+)
+
+// New create a new logger (not support log rotating).
+func New(writer io.Writer, level Level, opts ...Option) *Logger {
+    if writer == nil {
+        panic("the writer is nil")
+    }
+    cfg := zap.NewProductionConfig()
+    cfg.EncoderConfig.EncodeTime = func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+        enc.AppendString(t.Format("2006-01-02T15:04:05.000Z0700"))
+    }
+
+    core := zapcore.NewCore(
+        zapcore.NewJSONEncoder(cfg.EncoderConfig),
+        zapcore.AddSync(writer),
+        zapcore.Level(level),
+    )
+    logger := &Logger{
+        l:     zap.New(core, opts...),
+        level: level,
+    }
+    return logger
+}
+```
+
+定制后，我们的log包输出的内容就变成了如下这样了：
+
+```go
+{"level":"info","ts":"2021-07-11T10:45:38.858+0800","caller":"log/log.go:33","msg":"demo:","app":"start ok"}
+```
+
+#### 写入多个文件：access.log and error.log
+
+利用`zap.NewTree()`实现
+
+```go
+// NewTee creates a Core that duplicates log entries into two or more
+// underlying Cores.
+//
+// Calling it with a single Core returns the input unchanged, and calling
+// it with no input returns a no-op Core.
+func NewTee(cores ...Core) Core {
+	switch len(cores) {
+	case 0:
+		return NewNopCore()
+	case 1:
+		return cores[0]
+	default:
+		return multiCore(cores)
+	}
+}
+```
+
+下面是一种简单的实现思路：
+
+```go
+infoWriter := getWriter("./logs/demo_info.log")
+errorWriter := getWriter("./logs/demo_error.log")
+
+
+func getWriter(filename string) io.Writer {
+    // 生成rotatelogs的Logger 实际生成的文件名 demo.log.YYmmddHH
+    // demo.log是指向最新日志的链接
+    // 保存7天内的日志，每1小时(整点)分割一次日志
+    hook, err := rotatelogs.New(
+        strings.Replace(filename, ".log", "", -1)+"-%Y%m%d%H.log", // 没有使用go风格反人类的format格式
+        //rotatelogs.WithLinkName(filename),
+        //rotatelogs.WithMaxAge(time.Hour*24*7),
+        //rotatelogs.WithRotationTime(time.Hour),
+    )
+
+    if err != nil {
+        panic(err)
+    }
+    return hook
+}
+
+core := zapcore.NewTee(
+        zapcore.NewCore(encoder, zapcore.AddSync(infoWriter), infoLevel),
+        zapcore.NewCore(encoder, zapcore.AddSync(errorWriter), errorLevel),
+)
+
+//
+log := zap.New(core, zap.AddCaller()) 
+errorLogger = log.Sugar()
+```
 
 
 
@@ -820,105 +961,632 @@ func Sync() error {
 
 log rotate方案通常有两种，一种是基于logrotate工具的外部方案，一种是log库自身支持轮转。[zap库与logrotate工具的兼容性似乎有些问题](https://github.com/uber-go/zap/issues/797)，zap[官方FAQ也推荐第二种方案](https://github.com/uber-go/zap/blob/master/FAQ.md#does-zap-support-log-rotation)。
 
+Zap doesn't natively support rotating log files, since we prefer to leave this to an external program like `logrotate`.
+
+However, it's easy to integrate a log rotation package like [`gopkg.in/natefinch/lumberjack.v2`](https://godoc.org/gopkg.in/natefinch/lumberjack.v2) as a `zapcore.WriteSyncer`.
+
+```go
+// AddSync converts an io.Writer to a WriteSyncer. It attempts to be
+// intelligent: if the concrete type of the io.Writer implements WriteSyncer,
+// we'll use the existing Sync method. If it doesn't, we'll add a no-op Sync.
+func AddSync(w io.Writer) WriteSyncer {
+	switch w := w.(type) {
+	case WriteSyncer:
+		return w
+	default:
+		return writerWrapper{w}
+	}
+}
+```
+
 zap并不是原生支持rotate，而是通过外部包来支持，zap提供了WriteSyncer接口可以方便我们为zap加入rotate功能。目前在支持logrotate方面，natefinch的lumberjack是应用最为官方的包
 
 ```go
-type RotateOptions struct {
-    MaxSize    int
-    MaxAge     int
-    MaxBackups int
-    Compress   bool
+package main
+
+import (
+	"io"
+	"os"
+	"time"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"gopkg.in/natefinch/lumberjack.v2"
+)
+
+type Level = zapcore.Level
+
+const (
+	InfoLevel   Level = zap.InfoLevel   // 0, default level
+	WarnLevel   Level = zap.WarnLevel   // 1
+	ErrorLevel  Level = zap.ErrorLevel  // 2
+	DPanicLevel Level = zap.DPanicLevel // 3, used in development log
+	// PanicLevel logs a message, then panics
+	PanicLevel Level = zap.PanicLevel // 4
+	// FatalLevel logs a message, then calls os.Exit(1).
+	FatalLevel Level = zap.FatalLevel // 5
+	DebugLevel Level = zap.DebugLevel // -1
+)
+
+type Field = zap.Field
+
+func (l *Logger) Debug(msg string, fields ...Field) {
+	l.l.Debug(msg, fields...)
 }
 
+func (l *Logger) Info(msg string, fields ...Field) {
+	l.l.Info(msg, fields...)
+}
+
+func (l *Logger) Warn(msg string, fields ...Field) {
+	l.l.Warn(msg, fields...)
+}
+
+func (l *Logger) Error(msg string, fields ...Field) {
+	l.l.Error(msg, fields...)
+}
+func (l *Logger) DPanic(msg string, fields ...Field) {
+	l.l.DPanic(msg, fields...)
+}
+func (l *Logger) Panic(msg string, fields ...Field) {
+	l.l.Panic(msg, fields...)
+}
+func (l *Logger) Fatal(msg string, fields ...Field) {
+	l.l.Fatal(msg, fields...)
+}
+
+// function variables for all field types
+// in github.com/uber-go/zap/field.go
+
+var (
+	Skip        = zap.Skip
+	Binary      = zap.Binary
+	Bool        = zap.Bool
+	Boolp       = zap.Boolp
+	ByteString  = zap.ByteString
+	Complex128  = zap.Complex128
+	Complex128p = zap.Complex128p
+	Complex64   = zap.Complex64
+	Complex64p  = zap.Complex64p
+	Float64     = zap.Float64
+	Float64p    = zap.Float64p
+	Float32     = zap.Float32
+	Float32p    = zap.Float32p
+	Int         = zap.Int
+	Intp        = zap.Intp
+	Int64       = zap.Int64
+	Int64p      = zap.Int64p
+	Int32       = zap.Int32
+	Int32p      = zap.Int32p
+	Int16       = zap.Int16
+	Int16p      = zap.Int16p
+	Int8        = zap.Int8
+	Int8p       = zap.Int8p
+	String      = zap.String
+	Stringp     = zap.Stringp
+	Uint        = zap.Uint
+	Uintp       = zap.Uintp
+	Uint64      = zap.Uint64
+	Uint64p     = zap.Uint64p
+	Uint32      = zap.Uint32
+	Uint32p     = zap.Uint32p
+	Uint16      = zap.Uint16
+	Uint16p     = zap.Uint16p
+	Uint8       = zap.Uint8
+	Uint8p      = zap.Uint8p
+	Uintptr     = zap.Uintptr
+	Uintptrp    = zap.Uintptrp
+	Reflect     = zap.Reflect
+	Namespace   = zap.Namespace
+	Stringer    = zap.Stringer
+	Time        = zap.Time
+	Timep       = zap.Timep
+	Stack       = zap.Stack
+	StackSkip   = zap.StackSkip
+	Duration    = zap.Duration
+	Durationp   = zap.Durationp
+	Any         = zap.Any
+
+	Info   = std.Info
+	Warn   = std.Warn
+	Error  = std.Error
+	DPanic = std.DPanic
+	Panic  = std.Panic
+	Fatal  = std.Fatal
+	Debug  = std.Debug
+)
+
+// not safe for concurrent use
+func ResetDefault(l *Logger) {
+	std = l
+	Info = std.Info
+	Warn = std.Warn
+	Error = std.Error
+	DPanic = std.DPanic
+	Panic = std.Panic
+	Fatal = std.Fatal
+	Debug = std.Debug
+}
+
+type Logger struct {
+	l     *zap.Logger // zap ensure that zap.Logger is safe for concurrent use
+	level Level
+}
+
+var std = New(os.Stderr, InfoLevel, WithCaller(true))
+
+func Default() *Logger {
+	return std
+}
+
+type Option = zap.Option
+
+var (
+	WithCaller    = zap.WithCaller
+	AddStacktrace = zap.AddStacktrace
+)
+
+type RotateOptions struct {
+	MaxSize    int
+	MaxAge     int
+	MaxBackups int
+	Compress   bool
+}
+
+type LevelEnablerFunc func(lvl Level) bool
+
 type TeeOption struct {
-    Filename string
-    Ropt     RotateOptions
-    Lef      LevelEnablerFunc
+	Filename string
+	Ropt     RotateOptions
+	Lef      LevelEnablerFunc
 }
 
 func NewTeeWithRotate(tops []TeeOption, opts ...Option) *Logger {
-    var cores []zapcore.Core
-    cfg := zap.NewProductionConfig()
-    cfg.EncoderConfig.EncodeTime = func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
-        enc.AppendString(t.Format("2006-01-02T15:04:05.000Z0700"))
-    }
+	var cores []zapcore.Core
+	cfg := zap.NewProductionConfig()
+	cfg.EncoderConfig.EncodeTime = func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+		enc.AppendString(t.Format("2006-01-02T15:04:05.000Z0700"))
+	}
 
-    for _, top := range tops {
-        top := top
+	for _, top := range tops {
+		top := top
 
-        lv := zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
-            return top.Lef(Level(lvl))
-        })
+		lv := zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
+			return top.Lef(Level(lvl))
+		})
 
-        w := zapcore.AddSync(&lumberjack.Logger{
-            Filename:   top.Filename,
-            MaxSize:    top.Ropt.MaxSize,
-            MaxBackups: top.Ropt.MaxBackups,
-            MaxAge:     top.Ropt.MaxAge,
-            Compress:   top.Ropt.Compress,
-        })
+		w := zapcore.AddSync(&lumberjack.Logger{
+			Filename:   top.Filename,
+			MaxSize:    top.Ropt.MaxSize,
+			MaxBackups: top.Ropt.MaxBackups,
+			MaxAge:     top.Ropt.MaxAge,
+			Compress:   top.Ropt.Compress,
+		})
 
-        core := zapcore.NewCore(
-            zapcore.NewJSONEncoder(cfg.EncoderConfig),
-            zapcore.AddSync(w),
-            lv,
-        )
-        cores = append(cores, core)
-    }
+		core := zapcore.NewCore(
+			zapcore.NewJSONEncoder(cfg.EncoderConfig),
+			zapcore.AddSync(w),
+			lv,
+		)
+		cores = append(cores, core)
+	}
 
-    logger := &Logger{
-        l: zap.New(zapcore.NewTee(cores...), opts...),
-    }
-    return logger
+	logger := &Logger{
+		l: zap.New(zapcore.NewTee(cores...), opts...),
+	}
+	return logger
+}
+
+// New create a new logger (not support log rotating).
+func New(writer io.Writer, level Level, opts ...Option) *Logger {
+	if writer == nil {
+		panic("the writer is nil")
+	}
+	cfg := zap.NewProductionConfig()
+	cfg.EncoderConfig.EncodeTime = func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+		enc.AppendString(t.Format("2006-01-02T15:04:05.000Z0700"))
+	}
+
+	core := zapcore.NewCore(
+		zapcore.NewJSONEncoder(cfg.EncoderConfig),
+		zapcore.AddSync(writer),
+		zapcore.Level(level),
+	)
+	logger := &Logger{
+		l:     zap.New(core, opts...),
+		level: level,
+	}
+	return logger
+}
+
+func (l *Logger) Sync() error {
+	return l.l.Sync()
+}
+
+func Sync() error {
+	if std != nil {
+		return std.Sync()
+	}
+	return nil
+}
+
+func main() {
+	var tops = []TeeOption{
+		{
+			Filename: "access.log",
+			Ropt: RotateOptions{
+				MaxSize:    1,
+				MaxAge:     1,
+				MaxBackups: 3,
+				Compress:   true,
+			},
+			Lef: func(lvl Level) bool {
+				return lvl <= InfoLevel
+			},
+		},
+		{
+			Filename: "error.log",
+			Ropt: RotateOptions{
+				MaxSize:    1,
+				MaxAge:     1,
+				MaxBackups: 3,
+				Compress:   true,
+			},
+			Lef: func(lvl Level) bool {
+				return lvl > InfoLevel
+			},
+		},
+	}
+
+	logger := NewTeeWithRotate(tops)
+	ResetDefault(logger)
+
+	for i := 0; i < 20000; i++ {
+		Info("demo3:", String("app", "start ok"),
+			Int("major version", 3))
+		Error("demo3:", String("app", "crash"),
+			Int("reason", -1))
+	}
+
 }
 ```
 
 在TeeOption中加入了RotateOptions（当然这种绑定并非必须)，并使用lumberjack.Logger作为io.Writer传给zapcore.AddSync，这样创建出来的logger既有写多日志文件的能力，又让每种日志文件具备了自动rotate的功能。
 
-测试demo
+##### gin with zap and lumberjack
+
+只需要给zap添加一个lumberjack的WriteSyncer即可。
 
 ```go
-func main() {
-    var tops = []log.TeeOption{
-        {
-            Filename: "access.log",
-            Ropt: log.RotateOptions{
-                MaxSize:    1,
-                MaxAge:     1,
-                MaxBackups: 3,
-                Compress:   true,
-            },
-            Lef: func(lvl log.Level) bool {
-                return lvl <= log.InfoLevel
-            },
-        },
-        {
-            Filename: "error.log",
-            Ropt: log.RotateOptions{
-                MaxSize:    1,
-                MaxAge:     1,
-                MaxBackups: 3,
-                Compress:   true,
-            },
-            Lef: func(lvl log.Level) bool {
-                return lvl > log.InfoLevel
-            },
-        },
-    }
+package zlog
 
-    logger := log.NewTeeWithRotate(tops)
-    log.ResetDefault(logger)
+import (
+	"fmt"
+	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"gopkg.in/natefinch/lumberjack.v2"
+	"os"
+	"strconv"
+)
 
-    // 为了演示自动rotate效果，这里多次调用log输出
-    for i := 0; i < 20000; i++ {
-        log.Info("demo3:", log.String("app", "start ok"),
-            log.Int("major version", 3))
-        log.Error("demo3:", log.String("app", "crash"),
-            log.Int("reason", -1))
-    }
+const loggerKey = iota
+
+var Logger *zap.Logger
+
+// 初始化日志配置
+
+func init() {
+	level := zap.DebugLevel
+    
+    // 
+	w := zapcore.AddSync(&lumberjack.Logger{
+		Filename:   "testAccess.log",
+		MaxSize:    1,
+		MaxBackups: 1,
+		MaxAge:     1,
+		Compress:   true,
+	})
+
+	core := zapcore.NewCore(
+        // json格式日志
+		zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()), 
+        // 打印到控制台和文件
+		zapcore.NewMultiWriteSyncer(zapcore.AddSync(os.Stdout), zapcore.AddSync(w)), 
+        // 日志级别
+		level,                                                   
+	)
+
+	// 开启文件及行号
+	development := zap.Development()
+	Logger = zap.New(core,
+		zap.AddCaller(),
+		zap.AddStacktrace(zap.ErrorLevel),	// error级别日志，打印堆栈
+		development)
+}
+```
+
+##### 大佬的demo
+
+```go
+package log
+
+import (
+	"io"
+	"os"
+	"time"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"gopkg.in/natefinch/lumberjack.v2"
+)
+
+type Level = zapcore.Level
+
+const (
+	InfoLevel   Level = zap.InfoLevel   // 0, default level
+	WarnLevel   Level = zap.WarnLevel   // 1
+	ErrorLevel  Level = zap.ErrorLevel  // 2
+	DPanicLevel Level = zap.DPanicLevel // 3, used in development log
+	// PanicLevel logs a message, then panics
+	PanicLevel Level = zap.PanicLevel // 4
+	// FatalLevel logs a message, then calls os.Exit(1).
+	FatalLevel Level = zap.FatalLevel // 5
+	DebugLevel Level = zap.DebugLevel // -1
+)
+
+type Field = zap.Field
+
+func (l *Logger) Debug(msg string, fields ...Field) {
+	l.l.Debug(msg, fields...)
 }
 
+func (l *Logger) Info(msg string, fields ...Field) {
+	l.l.Info(msg, fields...)
+}
+
+func (l *Logger) Warn(msg string, fields ...Field) {
+	l.l.Warn(msg, fields...)
+}
+
+func (l *Logger) Error(msg string, fields ...Field) {
+	l.l.Error(msg, fields...)
+}
+func (l *Logger) DPanic(msg string, fields ...Field) {
+	l.l.DPanic(msg, fields...)
+}
+func (l *Logger) Panic(msg string, fields ...Field) {
+	l.l.Panic(msg, fields...)
+}
+func (l *Logger) Fatal(msg string, fields ...Field) {
+	l.l.Fatal(msg, fields...)
+}
+
+// function variables for all field types
+// in github.com/uber-go/zap/field.go
+
+var (
+	Skip        = zap.Skip
+	Binary      = zap.Binary
+	Bool        = zap.Bool
+	Boolp       = zap.Boolp
+	ByteString  = zap.ByteString
+	Complex128  = zap.Complex128
+	Complex128p = zap.Complex128p
+	Complex64   = zap.Complex64
+	Complex64p  = zap.Complex64p
+	Float64     = zap.Float64
+	Float64p    = zap.Float64p
+	Float32     = zap.Float32
+	Float32p    = zap.Float32p
+	Int         = zap.Int
+	Intp        = zap.Intp
+	Int64       = zap.Int64
+	Int64p      = zap.Int64p
+	Int32       = zap.Int32
+	Int32p      = zap.Int32p
+	Int16       = zap.Int16
+	Int16p      = zap.Int16p
+	Int8        = zap.Int8
+	Int8p       = zap.Int8p
+	String      = zap.String
+	Stringp     = zap.Stringp
+	Uint        = zap.Uint
+	Uintp       = zap.Uintp
+	Uint64      = zap.Uint64
+	Uint64p     = zap.Uint64p
+	Uint32      = zap.Uint32
+	Uint32p     = zap.Uint32p
+	Uint16      = zap.Uint16
+	Uint16p     = zap.Uint16p
+	Uint8       = zap.Uint8
+	Uint8p      = zap.Uint8p
+	Uintptr     = zap.Uintptr
+	Uintptrp    = zap.Uintptrp
+	Reflect     = zap.Reflect
+	Namespace   = zap.Namespace
+	Stringer    = zap.Stringer
+	Time        = zap.Time
+	Timep       = zap.Timep
+	Stack       = zap.Stack
+	StackSkip   = zap.StackSkip
+	Duration    = zap.Duration
+	Durationp   = zap.Durationp
+	Any         = zap.Any
+
+	Info   = std.Info
+	Warn   = std.Warn
+	Error  = std.Error
+	DPanic = std.DPanic
+	Panic  = std.Panic
+	Fatal  = std.Fatal
+	Debug  = std.Debug
+)
+
+// not safe for concurrent use
+func ResetDefault(l *Logger) {
+	std = l
+	Info = std.Info
+	Warn = std.Warn
+	Error = std.Error
+	DPanic = std.DPanic
+	Panic = std.Panic
+	Fatal = std.Fatal
+	Debug = std.Debug
+}
+
+type Logger struct {
+	l     *zap.Logger // zap ensure that zap.Logger is safe for concurrent use
+	level Level
+}
+
+var std = New(os.Stderr, InfoLevel, WithCaller(true))
+
+func Default() *Logger {
+	return std
+}
+
+type Option = zap.Option
+
+var (
+	WithCaller    = zap.WithCaller
+	AddStacktrace = zap.AddStacktrace
+)
+
+type RotateOptions struct {
+	MaxSize    int
+	MaxAge     int
+	MaxBackups int
+	Compress   bool
+}
+
+type LevelEnablerFunc func(lvl Level) bool
+
+type TeeOption struct {
+	Filename string
+	Ropt     RotateOptions
+	Lef      LevelEnablerFunc
+}
+
+func NewTeeWithRotate(tops []TeeOption, opts ...Option) *Logger {
+	var cores []zapcore.Core
+	cfg := zap.NewProductionConfig()
+	cfg.EncoderConfig.EncodeTime = func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+		enc.AppendString(t.Format("2006-01-02T15:04:05.000Z0700"))
+	}
+
+	for _, top := range tops {
+		top := top
+
+		lv := zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
+			return top.Lef(Level(lvl))
+		})
+
+		w := zapcore.AddSync(&lumberjack.Logger{
+			Filename:   top.Filename,
+			MaxSize:    top.Ropt.MaxSize,
+			MaxBackups: top.Ropt.MaxBackups,
+			MaxAge:     top.Ropt.MaxAge,
+			Compress:   top.Ropt.Compress,
+		})
+
+		core := zapcore.NewCore(
+			zapcore.NewJSONEncoder(cfg.EncoderConfig),
+			zapcore.AddSync(w),
+			lv,
+		)
+		cores = append(cores, core)
+	}
+
+	logger := &Logger{
+		l: zap.New(zapcore.NewTee(cores...), opts...),
+	}
+	return logger
+}
+
+// New create a new logger (not support log rotating).
+func New(writer io.Writer, level Level, opts ...Option) *Logger {
+	if writer == nil {
+		panic("the writer is nil")
+	}
+	cfg := zap.NewProductionConfig()
+	cfg.EncoderConfig.EncodeTime = func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+		enc.AppendString(t.Format("2006-01-02T15:04:05.000Z0700"))
+	}
+
+	core := zapcore.NewCore(
+		zapcore.NewJSONEncoder(cfg.EncoderConfig),
+		zapcore.AddSync(writer),
+		zapcore.Level(level),
+	)
+	logger := &Logger{
+		l:     zap.New(core, opts...),
+		level: level,
+	}
+	return logger
+}
+
+func (l *Logger) Sync() error {
+	return l.l.Sync()
+}
+
+func Sync() error {
+	if std != nil {
+		return std.Sync()
+	}
+	return nil
+}
+
+
+// main 
+package main
+
+import (
+	"github.com/bigwhite/zap-usage/pkg/log"
+)
+
+func main() {
+	var tops = []log.TeeOption{
+		{
+			Filename: "access.log",
+			Ropt: log.RotateOptions{
+				MaxSize:    1,
+				MaxAge:     1,
+				MaxBackups: 3,
+				Compress:   true,
+			},
+			Lef: func(lvl log.Level) bool {
+				return lvl <= log.InfoLevel
+			},
+		},
+		{
+			Filename: "error.log",
+			Ropt: log.RotateOptions{
+				MaxSize:    1,
+				MaxAge:     1,
+				MaxBackups: 3,
+				Compress:   true,
+			},
+			Lef: func(lvl log.Level) bool {
+				return lvl > log.InfoLevel
+			},
+		},
+	}
+
+	logger := log.NewTeeWithRotate(tops)
+	log.ResetDefault(logger)
+
+	for i := 0; i < 20000; i++ {
+		log.Info("demo3:", log.String("app", "start ok"),
+			log.Int("major version", 3))
+		log.Error("demo3:", log.String("app", "crash"),
+			log.Int("reason", -1))
+	}
+
+}
 ```
+
+end
 
 
 

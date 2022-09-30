@@ -109,6 +109,179 @@ func (c *Context) Next() {
 
 https://go.dev/doc/tutorial/web-service-gin
 
+```go
+package main
+
+import (
+    "log"
+
+    "github.com/carlosm27/apiwithgorm/grocery"
+    "github.com/carlosm27/apiwithgorm/model"
+    "github.com/gin-gonic/gin"
+)
+
+func main() {
+
+    db, err := model.Database()
+    if err != nil {
+        log.Println(err)
+    }
+    db.DB()
+
+    router := gin.Default()
+	// sample example
+    router.GET("/groceries", grocery.GetGroceries)
+    router.GET("/grocery/:id", grocery.GetGrocery)
+    router.POST("/grocery", grocery.PostGrocery)
+    router.PUT("/grocery/:id", grocery.UpdateGrocery)
+    router.DELETE("/grocery/:id", grocery.DeleteGrocery)
+
+    log.Fatal(router.Run(":10000"))
+}
+
+// modle
+package model 
+import ( 
+	"gorm.io/gorm" 
+) 
+type Grocery struct { 
+	gorm.Model 
+	Name string `json:"name"` 
+	Quantity int `json:"quantity"` 
+}
+// db
+package model
+
+import (
+    "gorm.io/driver/sqlite"
+    "gorm.io/gorm"
+)
+
+
+func Database() (*gorm.DB, error) {
+
+    db, err := gorm.Open(sqlite.Open("./database.db"), &gorm.Config{})
+
+    if err != nil {
+        log.Fatal(err.Error())
+    }
+
+    if err = db.AutoMigrate(&Grocery{}); err != nil {
+        log.Println(err)
+    }
+
+
+    return db, err
+
+}
+
+// struct
+package grocery
+
+import (
+    "net/http"
+
+    "github.com/carlosm27/apiwithgorm/model"
+    "github.com/gin-gonic/gin"
+)
+
+type NewGrocery struct {
+    Name     string `json:"name" binding:"required"`
+    Quantity int    `json:"quantity" binding:"required"`
+}
+
+type GroceryUpdate struct {
+    Name     string `json:"name"`
+    Quantity int    `json:"quantity"`
+}
+
+// handler func
+
+func PostGrocery(c *gin.Context) {
+
+    var grocery NewGrocery
+
+    if err := c.ShouldBindJSON(&grocery); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
+
+    newGrocery := model.Grocery{Name: grocery.Name, Quantity: grocery.Quantity}
+
+    db, err := model.Database()
+    if err != nil {
+        log.Println(err)
+    }
+
+    if err := db.Create(&newGrocery).Error; err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+
+    c.JSON(http.StatusOK, newGrocery)
+}
+
+func DeleteGrocery(c *gin.Context) {
+
+    var grocery model.Grocery
+
+    db, err := model.Database()
+    if err != nil {
+        log.Println(err)
+    }
+
+    if err := db.Where("id = ?", c.Param("id")).First(&grocery).Error; err != nil {
+        c.JSON(http.StatusNotFound, gin.H{"error": "Grocery not found!"})
+        return
+    }
+
+    if err := db.Delete(&grocery).Error; err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+    c.JSON(http.StatusOK, gin.H{"message": "Grocery deleted"})
+
+}
+```
+
+通常：
+
+* model 目录下放 strut（db table）
+* handler目录下放每个model对应的增删改查
+* service目录下放multi-model的关联操作，比如根据app id 获取group，owner，
+* api目录就是接口
+
+#### 路由组
+
+```go
+package main
+
+import (
+	"github.com/gin-gonic/gin"
+)
+
+//路由
+func main() {
+	r := gin.Default()
+	//路由组1， 处理GET请求
+	v1 := r.Group("/v1")
+	{
+		v1.GET("/", Index)
+		v1.GET("/test", Test)
+	}
+	//路由组2，处理Post请求
+	v2 := r.Group("/v2")
+	{
+		v2.POST("/login", Login)
+		v2.POST("/submit", Submit)
+	}
+    r.Run(":8080")
+}
+
+```
+
+
+
 ### ORM
 
 https://gorm.io/docs/
@@ -138,6 +311,122 @@ Some other database products draw a distinction. For example, in the Oracle Data
 #### go-gorm demo
 
 https://betterprogramming.pub/building-a-rest-api-with-go-gin-framework-and-gorm-38cb2d6353da
+
+```go
+package main
+
+import (
+"gorm.io/gorm"
+"gorm.io/driver/mysql"
+)
+type Product struct {
+        Code  string
+        Price uint
+}
+
+func main() {
+        dsn := "root:123456@tcp(172.17.0.4:3306)/test?charset=utf8mb4&parseTime=True&loc=Local"
+        db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+        if err != nil {
+                panic("failed to connect database")
+        }
+
+        // Migrate the schema
+        // 根据struct创建table
+        db.AutoMigrate(&Product{})
+
+        // Create
+        db.Create(&Product{Code: "D42", Price: 100})
+
+        // Read
+        var product Product
+        db.First(&product, 1)                 // find product with integer primary key
+        db.First(&product, "code = ?", "D42") // find product with code D42
+
+        // Update - update product's price to 200
+        db.Model(&product).Update("Price", 200)
+        // Update - update multiple fields
+        db.Model(&product).Updates(Product{Price: 200, Code: "F42"}) // non-zero fields
+        db.Model(&product).Updates(map[string]interface{}{"Price": 200, "Code": "F42"})
+
+        // Delete - delete product
+        db.Delete(&product, 1)
+}
+
+```
+
+#### go-gorm demo 2
+
+```go
+package Database
+
+import (
+   "fmt"
+   "gorm.io/driver/mysql"
+   "gorm.io/gorm"
+   "gorm.io/gorm/schema"
+   "time"
+   "ruiyi/plum/gin/Common"
+)
+
+var DB *gorm.DB
+
+func MysqlInit() (err error) {
+   mysqlConfig := Common.MysqlInfo
+   DB, err = gorm.Open(mysql.New(mysql.Config{
+      DSN: fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8&parseTime=True&loc=Local", mysqlConfig.User,
+         mysqlConfig.Password, mysqlConfig.Host, mysqlConfig.Port, mysqlConfig.Database),
+      DefaultStringSize:         256,   // string 类型字段的默认长度
+      DisableDatetimePrecision:  true,  // 禁用 datetime 精度，MySQL 5.6 之前的数据库不支持
+      DontSupportRenameIndex:    true,  // 重命名索引时采用删除并新建的方式，MySQL 5.7 之前的数据库和 MariaDB 不支持重命名索引
+      DontSupportRenameColumn:   true,  // 用 `change` 重命名列，MySQL 8 之前的数据库和 MariaDB 不支持重命名列
+      SkipInitializeWithVersion: false, // 根据版本自动配置
+   }), &gorm.Config{NamingStrategy: schema.NamingStrategy{
+      SingularTable: mysqlConfig.IsPlural, //允许表名复数  `User` 的表名应该是 `t_users` 如果该值为true则表名为`t_user`
+      //TablePrefix:   mysqlConfig.TablePrefix, // 表名前缀
+   }})
+   sqlDB, err := DB.DB()
+   //设置空闲连接池中连接的最大数量
+   sqlDB.SetMaxIdleConns(mysqlConfig.MaxIdLeConn)
+   //设置打开数据库连接的最大数量
+   sqlDB.SetMaxOpenConns(mysqlConfig.MaxOpenConn)
+   //设置了连接可复用的最大时间
+   sqlDB.SetConnMaxLifetime(time.Hour)
+   //defer sqlDB.Close()
+   return err
+}
+```
+
+
+
+### json渲染？
+
+如何wrap下json返回内容
+
+```go
+func main() {
+	r := gin.Default()
+
+	// gin.H 是map[string]interface{}的缩写
+	r.GET("/someJSON", func(c *gin.Context) {
+		// 方式一：自己拼接JSON
+		c.JSON(http.StatusOK, gin.H{"message": "Hello world!"})
+	})
+	r.GET("/moreJSON", func(c *gin.Context) {
+		// 方法二：使用结构体
+		var msg struct {
+			Name    string `json:"user"`
+			Message string
+			Age     int
+		}
+		msg.Name = "小王子"
+		msg.Message = "Hello world!"
+		msg.Age = 18
+		c.JSON(http.StatusOK, msg)
+	})
+	r.Run(":8080")
+}
+```
 
 
 
@@ -452,3 +741,4 @@ fasthttp 当前维护者的观点
 1. https://www.zhihu.com/question/20355738/answer/111087933
 2. https://www.zhihu.com/question/406955904/answer/1359178859
 3. https://blog.dianduidian.com/post/gin-%E4%B8%AD%E9%97%B4%E4%BB%B6next%E6%96%B9%E6%B3%95%E5%8E%9F%E7%90%86%E8%A7%A3%E6%9E%90/
+4. https://juejin.cn/post/7120039561538830367
