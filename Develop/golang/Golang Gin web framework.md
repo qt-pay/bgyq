@@ -131,6 +131,13 @@ func main() {
     router := gin.Default()
 	// sample example
     router.GET("/groceries", grocery.GetGroceries)
+    // curl IP:port/grocery/8 ==> gin.Context.Param("id")获取参数
+    // Param returns the value of the URL param.
+	// It is a shortcut for c.Params.ByName(key)
+	//     router.GET("/user/:id", func(c *gin.Context) {
+	//         // a GET request to /user/john
+	//         id := c.Param("id") // id == "john"
+	//     })
     router.GET("/grocery/:id", grocery.GetGrocery)
     router.POST("/grocery", grocery.PostGrocery)
     router.PUT("/grocery/:id", grocery.UpdateGrocery)
@@ -400,6 +407,155 @@ func MysqlInit() (err error) {
 
 
 ### json渲染？
+
+#### `gin.H{}`
+
+`gin.H`主要是为了开发者很方便的构建出一个`map`对象，不止用于`c.JSON`方法，也可以用于其他场景。
+
+```go
+func main()  {
+
+	r := gin.Default()
+	r.GET("/name/:name", func(context *gin.Context) {
+        // H is a shortcut for map[string]interface{}
+		// type H map[string]interface{}
+		context.JSON(http.StatusOK, gin.H{"data": context.Param("name") })
+	})
+	r.Run()
+}
+// output
+{
+    "name": "Robin"
+}
+```
+
+end
+
+#### `context.Json()`
+
+`Json()` serializes the given struct as JSON into the response body.
+It also sets the Content-Type as "application/json".
+
+```go
+type Book struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Author string `json:"author"`
+}
+
+var books = []Book{
+	{ID: "1", Title: "Harry Potter", Author: "J. K. Rowling"},
+	{ID: "2", Title: "The Lord of the Rings", Author: "J. R. R. Tolkien"},
+	{ID: "3", Title: "The Wizard of Oz", Author: "L. Frank Baum"},
+}
+
+func main() {
+	r := gin.New()
+
+    // JSON serializes the given struct as JSON into the response body.
+	// It also sets the Content-Type as "application/json".
+	//func (c *Context) JSON(code int, obj any) {
+		//c.Render(code, render.JSON{Data: obj})
+	//}
+	r.GET("/books", func(c *gin.Context) {
+		c.JSON(http.StatusOK, books)
+	})
+	r.Run()
+}
+// output
+// 格式没有缩进
+[{"id":"1","title":"Harry Potter","author":"J. K. Rowling"},{"id":"2","title":"The Lord of the Rings","author":"J. R. R. Tolkien"},{"id":"3","title":"The Wizard of Oz","author":"L. Frank Baum"}]
+```
+
+end
+
+#### IndentedJSON 美化
+
+`Json()`输出的JSON字符串都是扁平的，没有缩进，不美观。对于这种情况,Gin提供了便捷的`c.IndentedJSON()`方法，让输出的JSON更好看。
+
+```go
+r.GET("/books", func(c *gin.Context) {
+		c.IndentedJSON(http.StatusOK, books)
+})
+// output
+[
+    {
+        "id": "1",
+        "title": "Harry Potter",
+        "author": "J. K. Rowling"
+    },
+    {
+        "id": "2",
+        "title": "The Lord of the Rings",
+        "author": "J. R. R. Tolkien"
+    },
+    {
+        "id": "3",
+        "title": "The Wizard of Oz",
+        "author": "L. Frank Baum"
+    }
+]
+```
+
+#### PureJSON
+
+对于JSON字符串中特殊的字符串，比如`<`，Gin默认是转义的，比如变成`\ u003c`，但是有时候我们为了可读性，需要保持原来的字符，不进行转义，这时候我们就可以使用`PureJSON`
+
+```go
+	r.GET("/json", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"message": "<b>Hello, world!</b>",
+		})
+	})
+
+	r.GET("/purejson", func(c *gin.Context) {
+		c.PureJSON(200, gin.H{
+			"message": "<b>Hello, world!</b>",
+		})
+	})
+```
+
+用这两个API进行对比，我们运行访问`http://localhost:8080/json`，显示信息如下：
+
+```javascript
+{"message":"\u003cb\u003eHello, world!\u003c/b\u003e"}
+```
+
+特殊字符已经被转义了，现在访问`http://localhost:8080/pureJson`，显示的就是原始信息：
+
+```javascript
+{"message":"<b>Hello, world!</b>"}
+```
+
+可读性更强。
+
+#### AsciiJSON
+
+如果要把非`Ascii`字符串转为unicode编码，Gin同样提供了非常方便的方法。
+
+```go
+r.GET("/asciiJSON", func(c *gin.Context) {
+		c.AsciiJSON(200, gin.H{"message": "hello 王"})
+	})
+```
+
+通过`c.AsciiJSON`方法，Gin可以把所有的非`Ascii`字符全部转义为`unicode`编码，现在我们运行看看结果。
+
+```javascript
+{"message":"hello \u98de\u96ea\u65e0\u60c5"}
+```
+
+#### json加速
+
+在Gin中，提供了两种JSON解析器，用于生成JSON字符串。默认的是Golang(Go语言)内置的JSON，当然你也可以使用jsoniter，据说速度很快。如果要使用jsoniter，我们在`go build`编译的时候只需要这么做即可：
+
+```javascript
+go build -tags=jsoniter .
+```
+
+
+
+#### wrap?
 
 如何wrap下json返回内容
 
@@ -742,3 +898,5 @@ fasthttp 当前维护者的观点
 2. https://www.zhihu.com/question/406955904/answer/1359178859
 3. https://blog.dianduidian.com/post/gin-%E4%B8%AD%E9%97%B4%E4%BB%B6next%E6%96%B9%E6%B3%95%E5%8E%9F%E7%90%86%E8%A7%A3%E6%9E%90/
 4. https://juejin.cn/post/7120039561538830367
+5. https://medium.com/@wattanai.tha/go-tutorial-series-ep-1-building-rest-api-with-gin-7c17c7ab1d5b
+6. https://cloud.tencent.com/developer/article/1579400
