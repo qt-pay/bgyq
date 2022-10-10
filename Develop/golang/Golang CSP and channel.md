@@ -6,6 +6,23 @@ Each channel internally holds a mutex lock which is used to avoid data races in 
 
 https://halfrost.com/go_channel/
 
+### 饥饿 和 锁
+
+线程需要资源没有拿到，无法进行下一步，就是饥饿。死锁（Deadlock）和活锁（Livelock）都是饥饿的一种形式。 非抢占的系统中，互斥的资源获取，形成循环依赖就会产生死锁。死锁发生后，如果利用抢占解决，导致资源频繁被转让，有一定概率触发活锁。死锁、活锁，都可以通过设计并发控制算法解决，比如哲学家就餐问题。
+
+活锁、死锁本质上是一样的，原因是在获取临界区资源时，并发多个进程/线程声明资源占用(加锁)的顺序不一致，死锁是加不上就死等，活锁是加不上就放开已获得的资源，然后稍后重试。
+
+#### 死锁条件
+
+死锁的四个条件是：
+
+- **禁止抢占**（no preemption）：系统资源不能被强制从一个线程中退出。如果哲学家可以抢夺，那么大家都去抢别人的筷子，也会打破死锁的局面，但这是有风险的，因为可能孔子还没吃饭就被老子抢走了。计算机资源如果不是主动释放而是被抢夺有可能出现意想不到的现象。
+- **持有和等待**（hold and wait）：一个线程在等待时持有并发资源。持有并发资源并还等待其它资源。
+- **互斥**（mutual exclusion）：资源只能同时分配给一个线程，无法多个线程共享。资源具有排他性。
+- **循环等待**（circular waiting）：一系列线程互相持有其他进程所需要的资源。必须有一个循环依赖的关系。
+
+死锁只有在四个条件同时满足时发生，预防死锁必须至少破坏其中一项。
+
 ### Hoare  I/O
 
 C.A.R Hoare 1978 的萌芽论文，认为输入输出在一种模型编程语言中是基本要素。
@@ -188,6 +205,36 @@ type waitq struct {
 ```
 
 end
+
+##### chan 缓冲区
+
+hchan内部实现了一个环形队列作为缓冲区，队列的长度是创建channel时指定的。下图展示了一个可缓存6个元素的channel的示意图：
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/channel-buffer.png)
+
+
+
+- dataqsiz指示队列长度为6，即可缓存6个元素
+- buf指向队列的内存，队列中还剩余两个元素
+- qcount表示队列中还有两个元素
+- sendx指示后续写入的数据存储的位置，取值[0,6)
+- recvx指示从该位置读取数据，取值[0,6)
+
+##### chan 队列
+
+sendx 和 sendq对应
+
+从channel读消息，如果channel缓冲区为空或者没有缓存区，当前goroutine会被阻塞。
+向channel读消息，如果channel缓冲区已满或者没有缓冲区，当前goroutine会被阻塞。
+
+被阻塞的goroutine将会封装成sudog，加入到channel的等待队列中：
+
+- 因读消息阻塞的goroutine会被channel向channel写入数据的goroutine唤醒
+- 因写消息阻塞的goroutine会从channel读消息的goroutine唤醒
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/channel queue.png)
+
+一般情况下，recvq和sendq至少一个为空，只有一个例外，即同一个goroutine使用select语句向channel一边写数据，一个读数据。
 
 #### sudog
 
@@ -1177,3 +1224,4 @@ https://learnku.com/go/t/23459/how-to-close-the-channel-gracefully
 5. https://learnku.com/go/t/23459/how-to-close-the-channel-gracefully
 6. https://blog.csdn.net/chushoufengli/article/details/114966927
 7. https://go101.org/article/channel.html
+8. https://ustack.io/2019-10-04-Golang%E6%BC%AB%E8%B0%88%E4%B9%8B%E7%BB%93%E6%9E%84%E4%BD%93.html

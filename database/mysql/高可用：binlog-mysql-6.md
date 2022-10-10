@@ -3007,6 +3007,24 @@ MaxScale 目前提供的插件功能分为5类：
 
 可以设置`detect_stale_master=true`参数，即当master还生效时，maxscale对外可用。
 
+### 常用命令
+
+```bash
+# 每个node应该都有自己的角色
+$ maxadin list servers
+Servers.
+-------------------+-----------------+-------+-------------+--------------------
+Server             | Address         | Port  | Connections | Status              
+-------------------+-----------------+-------+-------------+--------------------
+server1            | mysql-node-1    |  3306 |           1 | Slave, Running
+server2            | mysql-node-2    |  3306 |           4 | Slave, Running
+server3            | mysql-node-3    |  3306 |           5 | Master, Running
+-------------------+-----------------+-------+-------------+--------------------
+
+```
+
+
+
 ## 多主N从
 
 常见方案：https://cloud.tencent.com/developer/article/1120513

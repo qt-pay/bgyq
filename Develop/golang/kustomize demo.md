@@ -1,19 +1,48 @@
 ### kustomize
 
-### 常见场景
+### 基础概念
 
-base中存放不经常改变yaml对象： 基线deploy,service,service-endpoints
+base中存放不经常改变yaml对象
 
-overlays中分区域存放，configmap,secret,通过image模块改变镜像
+每个 `base` 或 `overlays` 中都必须要有一个 `kustomization.yaml`
 
-| 常见场景                       | 语法               |
-| ------------------------------ | ------------------ |
-| 预发布1个副本，生产环境3个副本 | replicas 模块      |
-| 单元格                         | 单元格             |
-| 只改动镜像                     | image模块          |
-| yaml中变量更改                 | patches模块        |
-| 生成configmap                  | configmapGenerator |
-| 生成secret                     | secretGenerator    |
+Kustomize 允许用户以一个应用描述文件 （YAML 文件）为基础（Base YAML），然后通过 Overlay 的方式生成最终部署应用所需的描述文件。
+
+ `kustomize build dir/` 都可以使用 `kubectl apply -k dir/` 实现，但是需要 `v14.0` 版以上的 `kubectl`
+
+
+
+### kustomization.yaml:控制生成KRM
+
+The kustomization file is a YAML specification of a Kubernetes Resource Model ([KRM](https://github.com/kubernetes/design-proposals-archive/blob/main/architecture/resource-management.md)) object called a *Kustomization*. A kustomization describes how to generate or transform other KRM objects.
+
+ `kustomization.yaml` file is basically four lists:
+
+```
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- {pathOrUrl}
+- ...
+
+generators:
+- {pathOrUrl}
+- ...
+
+transformers:
+- {pathOrUrl}
+- ...
+
+validators:
+- {pathOrUrl}
+- ...
+```
+
+In all cases the `{pathOrUrl}` list entry can specify
+
+- a file system path to a YAML *file* containing one or more KRM objects, or
+- a *directory* (local or in a remote git repo) that contains a `kustomization.yaml` file.
 
 ### kustomize patch scope
 
