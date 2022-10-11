@@ -61,6 +61,10 @@ host1
 
 end
 
+#### ansible 并发
+
+依赖Python的**multiprocessing** 库
+
 #### ansible常用模块
 
 好多模块都依赖state进行判断操作了，but 默认的comman模块除外。
@@ -1092,7 +1096,7 @@ Ad-Hoc 适用于临时命令的执行，Playbook 适合中小项目，而大项�
 >
 > --
 
-```yaml
+```bash
 $ tree ansible_playbooks/
 ansible_playbooks/
 └── roles  必须叫roles

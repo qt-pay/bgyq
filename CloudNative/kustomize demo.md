@@ -251,7 +251,7 @@ patches:
 
 
 
-### patch渲染Demo
+### 自定义渲染工具Demo
 
 首先，上传一个vm list清单（txt or excel），里面包含了各个组件的名称和IP。
 
@@ -369,7 +369,40 @@ subsets:
 
 ```
 
+最终借组自己的渲染工具生成的kustomize文件如下：
+```bash
+$ cat kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
 
+
+#替换中间件IP,修改value值即可
+patchesJson6902:
+  ...
+  - target:
+      version: v1
+      kind: Endpoints
+      name: kafka-service
+    patch: |-
+      - op: replace
+        path: /subsets/0/addresses/0/ip
+        value: "10.253.146.24"
+      - op: replace
+        path: /subsets/0/addresses/1/ip
+        value: "10.253.146.25"
+      - op: replace
+        path: /subsets/0/addresses/2/ip
+        value: "10.253.146.30"
+
+```
+
+#### 疑惑
+
+这里解决的问题是，kustomization.yaml 不能预先知道真正的IP address，所以使用了占位符，然后通过前端的渲染工具，将占位符换成不同项目中的实际IP地址，然后再部署。
+
+但是这也将GitOps变成push 模式了，还有感觉这个自己替换占位符的方式好奇怪。
+
+--不过好像只能这样了，纵容kustomize从file或者env中读取变量方式去获取真实IP，也是得需要一个第三方agent实现变量的生成。
 
 
 
@@ -606,6 +639,7 @@ spec:
         app: sl-demo-app
     spec:
       containers:
+      # 在base基础上加了overlay中定义的env
       - env:
         - name: CUSTOM_ENV_VARIABLE # (1)
           value: Value defined by Kustomize ❤️
