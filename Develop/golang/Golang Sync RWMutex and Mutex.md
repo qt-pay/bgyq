@@ -10,6 +10,8 @@ Mutex 排他锁的这一次Lock总是Happens After上一次的Unlock。
 
 即，所有的goroutine都会进入临界区，但是会变成串行执行。
 
+我之前以为...加了lock，这块临界区只有一个线程进来且永远不会再有其他线程进来...显示是错误的，其他线程会等unlock之后，再lock进入临界区。
+
 如下，所有的goroutine都会等待且拿到Lock
 
 ```go

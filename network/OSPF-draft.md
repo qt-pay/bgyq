@@ -16,9 +16,417 @@ RIP路由协议只是以简单度量为单位，无法感知整个路由链路�
 
 
 
+### what is OSPF:heavy_check_mark:基于AS又做了内部划分？
+
+OSPF routing depends on the relationship that is defined between areas within a routing domain. CL commands are used to define area types and i5/OS routing neighbors.
+
+For the OSPF protocol, an autonomous system (AS) is a collection of IP networks that are under a common administration, sharing a common routing strategy, and running only one routing protocol. **The routers and links that make up the AS are in logical groups called areas. Areas are identified by uniquely assigned numbers and an AS must define at least one area.**
+
+When an AS is divided into multiple areas, the areas are interconnected by a router that is designated as an area border router (ABR). **By definition, an ABR has different OSPF interfaces that are attached to different OSPF areas so that it can operate in more than one area.** The ABR keeps a copy of the link-state database for each associated area.
+
+All routers in an area have identical copies of the autonomous system topology database. Each router computes its own routing table using a spanning tree algorithm, called the Dijkstra algorithm, that computes the Shortest Path First.
+
+OSPF supports multipath, which means it supports multiple routes to the same destination or system. When a new link-state update packet is received, the entire tree is recomputed. Other multipath calculation considerations include the following:
+
+- The routing tree retains all multiple equal-cost routes.
+- The routing tree selects only the shortest path for retention when multiple routes exists to the same destination.
+- Both costs are added to the stack when two routes, that have the same costs, are to the same destination.
+- OSPF always adds the route with the lowest cost to the TCP/IP stack.
+- Multipath routes to the same destination are added to the TCP/IP routing table when those paths have the same cost.
+
+**Each router in an OSPF area originates a link-state advertisement (LSA)**, which is a basic means of OSPF communication, to transport the topology of one router to all other routers in the same OSPF area. Each link-state originated advertisement, in each router, is stored in its link-state database. The database is synchronized between routers so that each router of the OSPF area, has an identical copy of the link-state database.
+
+An ABR uses a separate, summary-LSA to advertise to all other destinations that are known to the ABR but that are outside of the area.
+
+#### OSPF协议特点
+
+OSPF协议具有以下特点：
+
+- OSPF把自治系统AS（Autonomous System）划分成逻辑意义上的一个或多个区域；
+- OSPF通过LSA（Link State Advertisement）的形式发布路由；
+- OSPF依靠在OSPF区域内各设备间交互OSPF报文来达到路由信息的统一；
+- OSPF报文封装在IP报文内，可以采用单播或组播的形式发送。
+
+#### area
+
+动态路由协议为了区别路由选择性连通划分的area的概念，同区域内声明的网段都互通，不同区域内的网段需要路由注入才能通.
+
+#### OSPF路由器类型
+
+##### IR
+
+区域内路由器，Internal Router，该类路由器的所有接口都属于同一个OSPF区域。
+
+##### ABR
+
+Area Border Router，区域边界路由器。
+
+该类路由器可以同时属于两个以上的区域，但其中一个必须是骨干区域。ABR用来连接骨干区域和非骨干区域，它与骨干区域之间既可以是物理连接，也可以是逻辑上的连接。
+
+##### BR
+
+Backbone Router，骨干路由器。
+
+该类路由器至少有一个接口属于骨干区域。因此，所有的ABR和位于Area0的内部路由器都是骨干路由器。
+
+*Backbone routers* are routing devices that have one or more interfaces connected to the OSPF backbone area (area ID 0.0.0.0)
+
+##### ASBR
+
+ASBR，Autonomous System Boundary Router，自治系统边界路由器。
+
+与其他AS交换路由信息的路由器称为ASBR。ASBR并不一定位于AS的边界，它有可能是区域内路由器，也有可能是ABR。只要一台OSPF路由器引入了外部路由的信息，它就成为ASBR。
+
+#### 骨干区域（Backbone Area）
+
+OSPF划分区域之后，并非所有的区域都是平等的关系。其中有一个区域是与众不同的，它的区域号是0，通常被称为骨干区域。骨干区域负责区域之间的路由，非骨干区域之间的路由信息必须通过骨干区域来转发。对此，OSPF有两个规定：
+
+* 所有非骨干区域必须与骨干区域保持连通；
+* 骨干区域自身也必须保持连通。
+
+在实际应用中，可能会因为各方面条件的限制，无法满足上面的要求。这时可以通过配置OSPF虚连接予以解决。
+
+An OSPF *backbone area* consists of all networks in area ID 0.0.0.0, their attached routing devices, and all ABRs. The backbone itself does not have any ABRs.
+
+```bash
+## 配置area 0
+ospf 1
+ non-stop-routing
+ area 0.0.0.0
+## 但可以有多个ospf 进程
+## OSPF Process 2 
+ospf 2
+ non-stop-routing
+ area 0.0.0.0
+```
+
+end
+
+#### 虚链接
+
+虚连接（Virtual Link）
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/opsf-virtual-link.png)
+
+虚连接是指在两台ABR之间通过一个非骨干区域而建立的一条逻辑上的连接通道。它的两端必须是ABR，而且必须在两端同时配置方可生效。为虚连接两端提供一条非骨干区域内部路由的区域称为传输区（Transit Area)
+
+虚连接的另外一个应用是提供冗余的备份链路，当骨干区域因链路故障不能保持连通时，通过虚连接仍然可以保证骨干区域在逻辑上的连通
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/opsf-virtual-link-bk.png)
+
+虚连接相当于在两个ABR之间形成了一个点到点的连接，因此，在这个连接上，和物理接口一样可以配置接口的各参数，如发送Hello报文间隔等。
+
+两台ABR之间直接传递OSPF报文信息，它们之间的OSPF路由器只是起到一个转发报文的作用。由于协议报文的目的地址不是中间这些路由器，所以这些报文对于它们而言是透明的，只是当作普通的IP报文来转发。
+
+
+
+### 多OSPF进程路由：路由重发
+
+核心：
+
+1. **不同进程之间不相互交换路由信息，默认是不通的**
+2. **路由进程仅对本地路由器有意义，相连路由器的进程可以不同**
+3. **同一个网络可以配置在多个OSPF路由进程中**
+
+https://www.cnblogs.com/Wesuiliye/articles/13814796.html
+
+　　配置OSPF路由时，首先是要在路由器上启用OSPF路由进程，而且在一个路由器上可以同时创建并运行多个OSPF进程。在创建OSPF路由进程的过程中，还需要指定与路由进程相关接口所连接的网络IP地址范围（也就是通告的网段），并分配与IP地址范围相关联的区域ID（area区域）。 
+
+​    那这多个进程有什么用，而且不同进程之间又有什么区别和联系呢？相信很多知道熟悉OSPF的同学也不一定能够真正了解。
+
+　　我们可以简单地把多个不同OSPF进程理解为多个不同的动态路由协议的进程。我们知道，**不同路由协议下的路由信息是不能直接进行交换的**，最终也造成通过不同路由协议学习到的动态路由都是不通的。OSPF上的不同进程也是如此，不同进程各自有不同的LSDB（链路状态数据库），彼此之间是不交换路由信息的，当然彼此之间的网络也就不会直接相通了。这就是相当于把一个物理网络划分成多个虚拟网络。但是，我们也要理解的另一个重点就是，**不同的OSPF进程仅对本地路由器有意义，也就它是仅将本地路由器划分成多个虚拟网络**。即同一网络下，不同的路由器的OSPF进程ID是没有关系的，可以相同也可以不同。 
+
+> OSPF 进程ID只在本Router有作用，出了Router 数据包传输时，没有ospf process ID的概念了
+
+　　下面是一个OSPF多进程的例子，假设有以下这样的一个OSPF网络，R1、R2和R3均会运行OSPF协议，但R2上配置了100和200两个进程，R1和R3各一个进程，并都宣告各自接口所在的网段。如下图所示
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/multi-ospf.png)
+
+如果R2是一个OSPF进程的话，这4段网络都是可以互通的，但此时R2是2个OSPF进程，那192.168.1.0/24和192.168.3.0/24可以通么？答案是否定的，原因是R2上的OSPF100和OSPF200是不会互相通告路由信息的，但R2上12网段和23网段是可以通信的，因为它们在R2路由器上是直连路由，优先级最高，不需要OSPF协议的支持。所以如果想隔离这2段网络就可以采用此方法。  
+
+　　我们又会想，那如何才能使得他们进行通信呢？可以采用**路由重分发（Redistribute）**。
+
+```bash
+router ospf 1
+redistribute ospf 2 subnet
+
+router ospf 2
+redistribute ospf 1 subnet
+```
+
+　　如果R2路由器上将位于OSPF进程100的G1/0口学习到的OSPF路由和直连路由重分发到OSPF进程200，则R3路由器将学习到路由 192.168.1.0/24和192.168.12.0/24网络了。同理，如果R2路由器上将位于OSPF进程200的G2/0口学习到的OSPF路由和直连路由重分发到OSPF进程100，则R1路由器将学习到路由192.168.23.0/24和192.168.3.0/24网络了。 可能我们还会有疑问，那同一个网段是不是可以同时通告到不同的进程中呢，这样也是可以的，在上述案例中，这样做的话，也是可以做到网络互通的目的。
+
+　　一般来说，为了进行路由备份，我们可以将**同一个网络可以配置在多个OSPF路由进程中，在不同的进程内发布了多条相同的路由条目**。在两个进程内发布了两条相同的路由条目，需要注意路由优先级的问题.
+
+#### multi-ospf process 应用场景
+
+OSPF多进程常用于：
+
+1、每一个进程用来表示一类业务，如在某金融中心 ospf 1用来发布学习生产网网段，ospf 2用来发布学习各设备loopback地址，组网清晰
+
+2、便于实现路由管理（所有网段都在同一个进程里，因为OSPF的链路状态算法特点，不便于过滤，做路由策略等，通过配置多个进程 可以在各进程灵活引入等
+
+PS：通俗理解，两个ospf process 就是两个IGP路由
+
+#### ospf进程号
+
+https://forum.huawei.com/enterprise/zh/thread-326717.html
+
+在配置OSPF时，我们采用的是router ospf命令，在该命令后面需要加上这个OSPF进程的进程号(Process-Id)，进程号用于在一台路由器上区分不同的OSPF进程。进程号的取值范围是1-65535。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/ospf-process-ID.png)
+
+上图所示的拓扑中，R1使用进程号10创建了一个OSPF进程，同时激活了自己的直连接口FE0/0，而R2使用进程号20创建了一个OSPF进程，同时也在自己的直连接口上激活了OSPF。虽然这两个进程号不一样，但是R1-R2之间的邻居关系建立是完全没有问题的。因为OSPF进程号只具有本地意义，路由器之间交互的所有OSPF报文中，都不会体现任何关于进程号的信息。进程号只在一台路由器上用于区分多个OSPF进程，因此对于R1而言，它并不关心它的直连OSPF邻居R2使用的是什么OSPF进程号。
+
+#### multi-ospf-process：路由备份
+
+OSPF是普遍应用的一种路由协议，在使用过程中我们经常会发现客户会遇到这样的问题。 当路由器B配置了两个OSPF进程（如下图A），为了实现路由的备份，用户在两个进程内发布了两条相同的路由条目，例如在如下图中分别在路由器A和路由器C上发布了路由条目：172.168.0.1/32
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/ospf-backup.webp)
+
+
+
+在客户原先的网络设计中，将路由器A发布的路由cost值为1，而路由器C发布的metric值被人为增加cost为200。客户认为根据OSPF协议的选路比较原则，在路由器B的路由表中应该优先选择metric最小的路由，因而会选择路由器A的接口作为该路由的下一跳，而路由器C发布的路由作为本条路由的备份.
+
+按照客户的网络设计，当FE0/0端口故障中断的时候，172.168.0.1/32路由的下一跳将切换到RouterC上，直到FE0/0端口恢复，OSPF路由收敛完毕之后，OSPF路由表应该比较metric值而 重新选举RouterA作为该路由的下一跳。事实上，客户却在实际网络中发现，故障恢复后，下一跳依 然选择RouterC ! 这是为什么呢？
+
+在做故障诊断之前，首先让我们复习一下OSPF协议选路的原则，当单进程的一台OSPF路由器检查一个数据包的目的地址的时候，它应该通过下面的步骤选择最优路由：
+
+1. 选择可以和目的地址最精确匹配的路由，例如路由表中存在路由条目:172.168.64.0/18, 172.16.64.0/24 , 172.16.64.192.27，而目的地址是172.16.64.205,那么最后一条路由条目被选中。最精确的匹配总是应用最长匹配原则。
+2. 区域内的路径总是优先于区域间的路径，E1的外部路径总是优先于E2外部路径
+3. 不同的路由协议之间通过AD值进行比较路由，AD值相同的情况下会通过Metric进行比较
+
+在我们的案例中，两台路由器发布的路由分别属于不同的OSPF进程，它们拥有相同的AD值和不同的metric值，
+
+在RouterB上根据OSPF进程的启动收敛顺序，哪个进程率先把路由注入到ospf路由表，将优先选择它作为该路由的下一跳！这是因为METRIC值只会在同一进程内进行比较。在多进程OSPF的路由器上,不同进程的路由OSPF路由表只会注入OSPF路由表的顺序优先选择一条作为最佳路由放在全局路由表中，而不会针对metric属性进行选择，。
+
+不同的OSPF进程在路由器上类似两个不同的路由协议，我们要进行路由比较的时候，可以根据AD值而不是metric值进行比较。因此我们再设计类似的网络的时候，可以通过修改不同进程的AD值达到用户期望的目的。
+
+
+
+一、组网需求
+
+如下图为网络拓扑，当设备无故障时，业务走主设备，当主设备或设备间链路故障时启用备份设备。要求内网设备中路由表规模及路由信息传递的数量尽可能少，不需要知道外部明细路由。
+
+二、组网拓扑
+
+六台路由设备，分别命名为1/2/3/4/5/6。1/3/5为主设备，2/4/6为备份设备。网段及路由分配如图所示（如路由器1的两个接口IP分别为10.0.0.1/24 、10.0.1.1/24）。内外网之间通过OSPF划分区域进行区分，对网络进行备份保护的同时，使用totally stub区域配置对内网设备隐藏外部明细路由，减少内网设备中路由表规模及路由信息传递的数量。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/路由备份-ospf.jpg)
+
+```bash
+[1]
+
+interface LoopBack0
+ ip address 1.1.1.1 255.255.255.255
+
+#
+
+interface GigabitEthernet0/0
+ port link-mode route
+ combo enable copper
+ ip address 10.0.0.1 255.255.255.0
+
+#
+
+interface GigabitEthernet0/1
+ port link-mode route
+ combo enable copper
+ ip address 10.0.1.1 255.255.255.0
+
+#
+
+ospf 1
+ area 0.0.0.1
+  network 1.1.1.1 0.0.0.0
+  network 10.0.0.0 0.0.0.255
+  network 10.0.1.0 0.0.0.255
+  stub no-summary      //配置stub no-summary区域，减小内部网络路由表数量
+
+#
+
+[2]
+
+interface LoopBack0
+ ip address 2.2.2.2 255.255.255.255
+
+#
+
+interface GigabitEthernet0/0
+ port link-mode route
+ combo enable copper
+ ip address 10.0.0.2 255.255.255.0
+
+#
+
+interface GigabitEthernet0/1
+ port link-mode route
+ combo enable copper
+ ip address 10.0.2.2 255.255.255.0
+
+#
+
+ospf 1
+ area 0.0.0.1
+  network 2.2.2.2 0.0.0.0
+  network 10.0.0.0 0.0.0.255
+  network 10.0.2.0 0.0.0.255
+  stub no-summary                //配置stub no-summary区域
+
+#
+
+[3]
+
+ interface LoopBack0
+ ip address 3.3.3.3 255.255.255.255
+
+#
+
+interface GigabitEthernet0/0
+ port link-mode route
+ combo enable copper
+ ip address 20.0.0.2 255.255.255.0
+
+#
+
+interface GigabitEthernet0/1
+ port link-mode route
+ combo enable copper
+ ip address 10.0.1.2 255.255.255.0
+
+#
+
+interface GigabitEthernet0/2
+ port link-mode route
+ combo enable copper
+ ip address 20.0.1.2 255.255.255.0
+
+#
+
+ospf 1
+ area 0.0.0.0
+  network 3.3.3.3 0.0.0.0
+  network 20.0.0.0 0.0.0.255
+  network 20.0.1.0 0.0.0.255
+ area 0.0.0.1
+  network 10.0.1.0 0.0.0.255
+  stub no-summary                //配置stub no-summary区域
+
+ 
+
+[4]
+
+interface LoopBack0
+ ip address 4.4.4.4 255.255.255.255
+
+#
+
+interface GigabitEthernet0/0
+ port link-mode route
+ combo enable copper
+ ip address 20.0.0.1 255.255.255.0
+
+#
+
+interface GigabitEthernet0/1
+ port link-mode route
+ combo enable copper
+ ip address 10.0.2.1 255.255.255.0
+
+#
+
+interface GigabitEthernet0/2
+ port link-mode route
+ combo enable copper
+ ip address 20.0.2.1 255.255.255.0
+ ospf cost 100        //将路由4-6间的链路接口cost设为100，得链路无故障情况下路由
+
+                                   优先使用主设备，即使用4-3之间的链路，通过路由3访问外网。
+
+#
+
+ospf 1
+
+ area 0.0.0.0
+  network 4.4.4.4 0.0.0.0
+  network 20.0.0.0 0.0.0.255
+  network 20.0.2.0 0.0.0.255
+
+ area 0.0.0.1
+  network 10.0.2.0 0.0.0.255
+  stub no-summary              //配置stub no-summary区域
+
+#
+
+ 
+
+[5]
+
+ interface GigabitEthernet0/0
+ port link-mode route
+ combo enable copper
+ ip address 30.0.0.1 255.255.255.0
+
+#
+
+interface GigabitEthernet0/1
+ port link-mode route
+ combo enable copper
+ ip address 20.0.1.1 255.255.255.0
+
+#
+
+#
+
+ospf 1
+
+ area 0.0.0.0
+  network 5.5.5.5 0.0.0.0
+  network 20.0.1.0 0.0.0.255
+  network 30.0.0.0 0.0.0.255
+
+#
+
+ 
+
+[6]
+
+interface LoopBack0
+
+ ip address 6.6.6.6 255.255.255.255
+
+#
+
+interface GigabitEthernet0/0
+ port link-mode route
+ combo enable copper
+ ip address 30.0.0.2 255.255.255.0
+
+#
+
+interface GigabitEthernet0/1
+ port link-mode route
+ combo enable copper
+ ip address 20.0.2.2 255.255.255.0
+
+#
+
+ospf 1
+ area 0.0.0.0
+  network 6.6.6.6 0.0.0.0
+  network 20.0.2.0 0.0.0.255
+  network 30.0.0.0 0.0.0.255
+
+#
+```
+
+
+
+Running two OSPF processes on the same interface is not supported and does not really make any sense to me from a protocol perspective. You'll need to configure the networks such that the two processes are running on different interfaces.
+
+
+
 ### 作业
-
-
 
 简单p2p拓扑
 
@@ -194,7 +602,134 @@ https://blog.csdn.net/qq_44667101/article/details/105733924?spm=1001.2101.3001.6
 
 　　[R1]ip route-static 172.16.1.0 24 Serial 1/1    到C段的路由条目  【Serial接口写法】
 
+### Enabling OSPF on an interface
+
+To enable OSPF on an interface, you can enable OSPF on the network where the interface resides or directly enable OSPF on that interface. If you configure both, the latter takes precedence
+
+| Step                                          | Command                                                      | Remarks                                                      |
+| --------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| 1.   Enter system view.                       | **system-view**                                              | N/A                                                          |
+| 2.   Enter interface view.                    | **interface** *interface-type interface-number*              | N/A                                                          |
+| 3.   Enable an OSPF process on the interface. | **ospf** *process-id* **area** *area-id* [ **exclude-subip** ] | By default, OSPF is disabled on an interface.If the specified OSPF process and area do not exist, the command creates the OSPF process and area. Disabling an OSPF process on an interface does not delete the OSPF process or the area. |
+
+#### 基于接口和进程配置ospf
+
+OSPF两种配置方式，
+
+1、接口配置
+
+```bash
+[H3C]interface l2
+[H3C-LoopBack2]ip ad
+[H3C-LoopBack2]ip address 1.1.1.8 255.255.255.255
+# 这里栗子是loopback比较特殊，掩码是32位。
+# 换成 ip addr 192.168.1.8 255.255.255.0 就比较直观了
+# 直接将接口网段宣告到ospf
+[H3C-LoopBack2]ospf 1 area 0.0.0.0
+[H3C]display ospf
+
+         OSPF Process 1 with Router ID 1.1.1.8
+                 OSPF Protocol Information
+
+ RouterID: 1.1.1.8          Router type:  ABR
+ Route tag: 0
+ ...
+
+ Area: 0.0.0.0          (MPLS TE  not enabled)
+ Authentication type: None    Area flag: Normal
+ SPF scheduled count: 1
+ ExChange/Loading neighbors: 0
+
+ Interface: 1.1.1.8 (LoopBack2)
+ Cost: 0       State: Loopback    Type: PTP       MTU: 1536
+ Timers: Hello 10, Dead 40, Poll 40, Retransmit 5, Transmit Delay 1
+ FRR backup: Enabled
+ Enabled by interface configuration (including secondary IP addresses)
+
+ Area: 0.0.0.2          (MPLS TE  not enabled)
+ Authentication type: None    Area flag: Normal
+ SPF scheduled count: 1
+ ExChange/Loading neighbors: 0
+
+```
+
+2、进程配置
+
+```bash
+[H3C]interface LoopBack 8
+[H3C-LoopBack8]ipa
+[H3C-LoopBack8]ip a
+[H3C-LoopBack8]ip address 9.9.9.9 255.255.255.255
+[H3C-LoopBack8]quit
+# 使用ospf 进程宣告网络
+[H3C]ospf 1
+[H3C-ospf-1]ar
+[H3C-ospf-1]area 0
+[H3C-ospf-1-area-0.0.0.0]network 9.9.9.9 255.255.255.255
+[H3C-ospf-1-area-0.0.0.0]quit
+
+C-ospf-1]display ospf
+
+         OSPF Process 1 with Router ID 1.1.1.8
+                 OSPF Protocol Information
+
+ RouterID: 1.1.1.8          Router type:  ABR
+ Route tag: 0
+ Multi-VPN-Instance is not enabled
+ ...
+
+ Area: 0.0.0.0          (MPLS TE  not enabled)
+ Authentication type: None    Area flag: Normal
+ SPF scheduled count: 1
+ ExChange/Loading neighbors: 0
+
+ Interface: 1.1.1.8 (LoopBack2)
+ Cost: 0       State: Loopback    Type: PTP       MTU: 1536
+ Timers: Hello 10, Dead 40, Poll 40, Retransmit 5, Transmit Delay 1
+ FRR backup: Enabled
+ Enabled by interface configuration (including secondary IP addresses)
+
+ Interface: 2.2.2.2 (LoopBack4)
+ Cost: 0       State: Loopback    Type: PTP       MTU: 1536
+ Timers: Hello 10, Dead 40, Poll 40, Retransmit 5, Transmit Delay 1
+ FRR backup: Enabled
+ Enabled by interface configuration (including secondary IP addresses)
+
+ Interface: 9.9.9.9 (LoopBack8)
+ Cost: 0       State: Loopback    Type: PTP       MTU: 1536
+ Timers: Hello 10, Dead 40, Poll 40, Retransmit 5, Transmit Delay 1
+ FRR backup: Enabled
+
+```
+
+
+
+
+
+
+
 ### 基础名词
+
+#### router-id
+
+By default, no global router ID is configured.
+
+If no global router ID is configured, the highest loopback interface IP address, if any, is used as the router ID. If no loopback interface IP address is available, the highest physical interface IP address is used, regardless of the interface status (up or down)
+
+#### area-id
+
+```bash
+[H3C-ospf-3]area?
+  area  Specify the OSPF area
+
+[H3C-ospf-3]area ?
+  INTEGER<0-4294967295>  OSPF area ID (Integer)
+  X.X.X.X                OSPF area ID (IP address)
+```
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/ospf-package.jpg)
+
+
 
 #### arp
 
@@ -278,74 +813,7 @@ Designated Router/Backup Designated Router/Designated Route other
 
 OSPF网络中，既不是DR也不是BDR的路由器为DR Other。DR Other仅与DR和BDR建立邻接关系，DR Other之间不交换任何路由信息。这样就减少了广播网和NBMA网络上各路由器之间邻接关系的数量，同时减少网络流量，节约了带宽资源。
 
-#### OSPF路由器类型
 
-##### IR
-
-区域内路由器，Internal Router，该类路由器的所有接口都属于同一个OSPF区域。
-
-##### ABR
-
-Area Border Router，区域边界路由器。
-
-该类路由器可以同时属于两个以上的区域，但其中一个必须是骨干区域。ABR用来连接骨干区域和非骨干区域，它与骨干区域之间既可以是物理连接，也可以是逻辑上的连接。
-
-##### BR
-
-Backbone Router，骨干路由器。
-
-该类路由器至少有一个接口属于骨干区域。因此，所有的ABR和位于Area0的内部路由器都是骨干路由器。
-
-*Backbone routers* are routing devices that have one or more interfaces connected to the OSPF backbone area (area ID 0.0.0.0)
-
-##### ASBR
-
-ASBR，Autonomous System Boundary Router，自治系统边界路由器。
-
-与其他AS交换路由信息的路由器称为ASBR。ASBR并不一定位于AS的边界，它有可能是区域内路由器，也有可能是ABR。只要一台OSPF路由器引入了外部路由的信息，它就成为ASBR。
-
-
-
-#### OSPF 区域
-
-##### 骨干区域
-
-骨干区域（Backbone Area）
-
-OSPF划分区域之后，并非所有的区域都是平等的关系。其中有一个区域是与众不同的，它的区域号是0，通常被称为骨干区域。骨干区域负责区域之间的路由，非骨干区域之间的路由信息必须通过骨干区域来转发。对此，OSPF有两个规定：
-
-* 所有非骨干区域必须与骨干区域保持连通；
-* 骨干区域自身也必须保持连通。
-
-在实际应用中，可能会因为各方面条件的限制，无法满足上面的要求。这时可以通过配置OSPF虚连接予以解决。
-
-An OSPF *backbone area* consists of all networks in area ID 0.0.0.0, their attached routing devices, and all ABRs. The backbone itself does not have any ABRs.
-
-```bash
-## 配置area 0
-ospf 1
- non-stop-routing
- area 0.0.0.0
-
-```
-
-end
-
-##### 虚链接
-
-虚连接（Virtual Link）
-
-![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/opsf-virtual-link.png)
-
-虚连接是指在两台ABR之间通过一个非骨干区域而建立的一条逻辑上的连接通道。它的两端必须是ABR，而且必须在两端同时配置方可生效。为虚连接两端提供一条非骨干区域内部路由的区域称为传输区（Transit Area)
-
-虚连接的另外一个应用是提供冗余的备份链路，当骨干区域因链路故障不能保持连通时，通过虚连接仍然可以保证骨干区域在逻辑上的连通
-
-![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/opsf-virtual-link-bk.png)
-
-虚连接相当于在两个ABR之间形成了一个点到点的连接，因此，在这个连接上，和物理接口一样可以配置接口的各参数，如发送Hello报文间隔等。
-
-两台ABR之间直接传递OSPF报文信息，它们之间的OSPF路由器只是起到一个转发报文的作用。由于协议报文的目的地址不是中间这些路由器，所以这些报文对于它们而言是透明的，只是当作普通的IP报文来转发。
 
 #### OSPF网络类型
 
@@ -611,6 +1079,63 @@ $ ospf 1 router-id 1.1.1.1
 
 * **vpn-instance** : vpn-instance-name 表示VPN实例。
 
+#### 创建ospf interface
+
+```bash
+# 将一个interface 
+[H3C]interface LoopBack 4
+[H3C-LoopBack4]ip add
+[H3C-LoopBack4]ip address 2.2.2.2 255.255.255.255
+[H3C-LoopBack4]ospf 1 area 0.0.0.0
+
+[H3C-LoopBack4]display ospf
+
+         OSPF Process 1 with Router ID 1.1.1.8
+                 OSPF Protocol Information
+
+ RouterID: 1.1.1.8          Router type:  ABR
+ Route tag: 0
+ Multi-VPN-Instance is not enabled
+ Ext-community type: Domain ID 0x5, Route Type 0x306, Router ID 0x107
+ Domain ID: 0.0.0.0
+ Opaque capable
+ ISPF is enabled
+ SPF-schedule-interval: 5 50 200
+ LSA generation interval: 5 50 200
+ LSA arrival interval: 1000 500 500
+ Transmit pacing: Interval: 20 Count: 3
+ Default ASE parameters: Metric: 1 Tag: 1 Type: 2
+ Route preference: 10
+ ASE route preference: 150
+ SPF calculation count: 2
+ RFC 1583 compatible
+ Graceful restart interval: 120
+ SNMP trap rate limit interval: 10  Count: 7
+ Area count: 4   NSSA area count: 0
+ ExChange/Loading neighbors: 0
+
+ Area: 0.0.0.0          (MPLS TE  not enabled)
+ Authentication type: None    Area flag: Normal
+ SPF scheduled count: 1
+ ExChange/Loading neighbors: 0
+
+ Interface: 1.1.1.8 (LoopBack2)
+ Cost: 0       State: Loopback    Type: PTP       MTU: 1536
+ Timers: Hello 10, Dead 40, Poll 40, Retransmit 5, Transmit Delay 1
+ FRR backup: Enabled
+ Enabled by interface configuration (including secondary IP addresses)
+ # 对应
+ Interface: 2.2.2.2 (LoopBack4)
+ Cost: 0       State: Loopback    Type: PTP       MTU: 1536
+ Timers: Hello 10, Dead 40, Poll 40, Retransmit 5, Transmit Delay 1
+ FRR backup: Enabled
+ Enabled by interface configuration (including secondary IP addresses)
+ ....
+
+```
+
+
+
 #### 有向图？？？
 
 LSDB有向图
@@ -848,4 +1373,5 @@ https://support.huawei.com/enterprise/en/knowledge/EKB1000116686
 2. http://www.h3c.com/cn/d_201312/810777_30005_0.htm#_Toc373336023
 3. https://blog.csdn.net/qq_38265137/article/details/80390740
 4. https://blog.51cto.com/u_3258715/1735713
-4. https://blog.51cto.com/u_12347226/2435104
+5. https://blog.51cto.com/u_12347226/2435104
+6. https://blog.csdn.net/Bert_Wang/article/details/106869834

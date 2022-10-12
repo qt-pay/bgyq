@@ -55,12 +55,20 @@ display ip vpn-instance [ instance-name vpn-instance-name ]
 
 不同VPN之间的路由隔离通过VPN实例（VPN-instance）实现，VPN实例又称为VRF（Virtual Routing and Forwarding，虚拟路由和转发）实例。
 
+VPN（Virtual Private Network）：也称VRF(Virtual Route Forwarding，虚拟路由及转发) ，目的是解决不同企业私网地址段相同，为了防止冲突，采用将相同私网地址放到不同的VRF表中。
+
+一台设备由于可能同时连接了多个用户，这些用户（的路由）彼此之间需要相互隔离，那么这时候就用到了VRF，设备上每一个用户都对应一个VRF。设备除了维护全局IP路由表之外，还为每个VRF维护一张独立的IP路由表，这张路由表称为VRF路由表。要注意的是全局IP路由表，以及每一个VRF路由表都是相互独立或者说相互隔离的。
+
+对于每一个VRF表，都具有路由区分符(Route Distinguisher：RD)和路由目标(Route Target：RT)两大属性。
+
 ### VRF:tada:
 
 VRF（Virtual Routing and Rorwarding，虚拟路由转发）技术，华为 VRF 又称 VPN Instance（VPN 实例），是种虚拟化技术。
 
 在物理设备上，创建多个 VRF-Instance（VRF 实例，VRF-INST），然后将物理接口划入不同的 VRP-INST 中。
 简单理解是，将整个设备“分割”成多个小设备。
+
+对于每一个VRF表，都具有路由区分符(Route Distinguisher：RD)和路由目标(Route Target：RT)两大属性。
 
 #### 典型应用场景
 
@@ -146,7 +154,9 @@ VPN具有以下两个基本特征：
 
 
 
-### MCE设备 VPN
+### MCE设备 VPN:thinking:
+
+为方便记忆和管理，建议用户在MCE设备和PE设备上为同一个VPN实例配置相同的RD。
 
 BGP/MPLS VPN以隧道的方式解决了在公网中传送私网数据的问题，但传统的BGP/MPLS VPN架构要求每个VPN实例单独使用一个CE与PE相连。
 
@@ -154,11 +164,17 @@ BGP/MPLS VPN以隧道的方式解决了在公网中传送私网数据的问题�
 
 随着用户业务的不断细化和安全需求的提高，很多情况下**一个私有网络内的用户需要划分成多个VPN**，不同VPN用户间的业务需要完全隔离。此时，为每个VPN单独配置一台CE将加大用户的设备开支和维护成本；而多个VPN共用一台CE，使用同一个路由表项，又无法保证数据的安全性。
 
-使用本系列交换机提供的MCE（Multi-VPN-Instance CE，具备多VPN实例功能的CE）功能，可以有效解决多VPN网络带来的用户数据安全与网络成本之间的矛盾，它使用CE设备本身的VLAN接口编号与网络内的VPN进行绑定，并为每个VPN创建和维护独立的路由转发表（Multi-VRF）。这样不但能够隔离私网内不同VPN的报文转发路径，而且通过与PE间的配合，也能够将每个VPN的路由正确发布至对端PE，保证VPN报文在公网内的传输。
+交换机提供的MCE（Multi-VPN-Instance CE，具备多VPN实例功能的CE）功能，可以有效解决多VPN网络带来的用户数据安全与网络成本之间的矛盾，它使用CE设备本身的VLAN接口编号与网络内的VPN进行绑定，并为每个VPN创建和维护独立的路由转发表（Multi-VRF）。这样不但能够隔离私网内不同VPN的报文转发路径，而且通过与PE间的配合，也能够将每个VPN的路由正确发布至对端PE，保证VPN报文在公网内的传输。
 
 #### 工作原理
 
 左侧私网内有两个VPN站点：站点1和站点2，分别通过MCE设备接入MPLS骨干网，其中VPN1和VPN2的用户，需要分别与远端站点2内的VPN1用户和站点1内的VPN2用户建立VPN隧道。
+
+通过配置MCE功能，可以在MCE设备上为VPN1和VPN2创建不同的VPN实例，为其维护各自独立的路由表，并使用Vlan-interface2接口与VPN1进行绑定、Vlan-interface3与VPN2进行绑定。在接收路由信息时，MCE设备根据接收接口的编号，即可判断该路由信息的来源，并将其维护到对应VPN实例的路由转发表中。
+
+同时，MCE需要通过不同的路由协议或进程来向PE发布VPN1和VPN2的路由，以便PE能够识别并分别维护不同VPN的路由。因此，MCE需要通过两个接口连接到PE，并创建两个VPN实例与两个接口分别绑定。在向PE发布VPN路由时，将不同的路由协议或进程与VPN实例绑定，并在不同的协议或进程中分别引入VPN1和VPN2内的路由。
+
+通过上述过程，MCE即可将两个VPN内的路由信息分别发布到PE设备。
 
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/MCE-vpn.png)
 

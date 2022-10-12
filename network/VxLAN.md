@@ -173,7 +173,64 @@ VXLAN 网络架构的组件有：
 
 6. **VSI**：Virtual Switch Instance，虚拟交换实例，VTEP 上为一个 VXLAN 提供二层交换服务的虚拟交换实例。VXLAN ID 和VSI 是一对一的关系，所以每增加一个VXLAN ID的二层网络都要有唯一的VSI实例与之对应。它具有传统以太网交换机的所有功能，包括源MAC地址学习、MAC地址老化、泛洪等。VSI与VXLAN一一对应。
 
-7.  **VSI-Interface**（VSI的虚拟三层接口）：类似于Vlan-Interface，用来处理跨VNI即跨VXLAN的流量。VSI-Interface与VSI一一对应，在没有跨VNI流量时可以没有VSI-Interface。
+   VxLAN的创建必须在vsi视图下面。
+
+   ```bash
+   # vsi  Configure a Virtual Switch Instance (VSI)
+   vsi CORE_AGENT_VSI_31446
+    # 为vsi指定网关
+    # gateway vsi-interface vsi-interface-id
+    gateway vsi-interface 31446
+    statistics enable
+    arp suppression enable
+    flooding disable all
+    # vxlan vxlan-id
+    # 在一个VSI下只能创建一个VXLAN
+    # 不同VSI下创建的VXLAN，其VXLAN ID不能相同
+    vxlan 31446
+    evpn encapsulation vxlan
+     route-distinguisher auto
+     vpn-target auto export-extcommunity
+     vpn-target auto import-extcommunity
+   ```
+
+   
+
+7. **VSI-Interface**（VSI的虚拟三层接口）：类似于Vlan-Interface，用来处理跨VNI即跨VXLAN的流量。VSI-Interface与VSI一一对应，在没有跨VNI流量时可以没有VSI-Interface。
+
+   当业务数据绑定到vpn-instance，就是把业务从普通的ipv4网络隔离，接入到vpn专网。
+   多个vsi绑定同一个vn-instance就是它们都属于同一个vpn专网。
+
+   ```bash
+   # VSI-Interface 24是跨VXLAN转发时用到的接口 
+   interface Vsi-interface24 
+    description SDN_VRF_VSI_Interface_130
+    ip binding vpn-instance vrf13
+    l3-vni 130 
+   
+   
+   # vsi-interface 25是业务虚机的网关接口
+   interface Vsi-interface25
+    description SDN_VSI_Interface_13 
+    ip binding vpn-instance vrf13 
+    ip address 10.1.13.254 255.255.255.0 sub 
+    mac-address 6805-ca21-d6e5 
+   ```
+
+   
+
+8. **Tunnel**: 手工关联VXLAN与VXLAN隧道
+
+   | 操作                     | 命令                       | 说明                                                         |
+   | ------------------------ | -------------------------- | ------------------------------------------------------------ |
+   | 进入系统视图             | **system-view**            | -                                                            |
+   | 进入VSI视图              | **vsi** *vsi-name*         | -                                                            |
+   | 进入VXLAN视图            | **vxlan** *vxlan-id*       | -                                                            |
+   | 配置VXLAN与VXLAN隧道关联 | **tunnel** *tunnel-number* | 缺省情况下，VXLAN未关联VXLAN隧道VTEP必须与相同VXLAN内的其它VTEP建立VXLAN隧道，并将该隧道与VXLAN关联 |
+
+    
+
+   
 
 #### 控制平面 control plane：MP-BGP EVPN
 
