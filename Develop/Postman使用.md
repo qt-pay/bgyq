@@ -150,8 +150,75 @@ if (let res = m / n;) {
 }
 ```
 
+#### 发送post请求
 
+pm.sendRequest默认是不带参数的Get请求：
+```js
+const url ="https://postman-echo.com/get"
+pm.sendRequest(url, function (err, response) {  // 参数1是request请求信息，参数2是请求回调返回的数据。
+    console.log(response.json());
+});
+```
+使用pm.sendRequest发送JSON 格式的Post请求：
+```json
+const regRequest = {
+  url: 'http://XXXX',
+  method: 'POST',
+  header: 'Content-Type: application/json',  //注意要在Header中声明内容使用的类型
+  body: {
+    mode: 'raw',  // 使用raw(原始)格式
+    raw: JSON.stringify({ name: 'Test', password: '123456' }) //要将JSON对象转为文本发送
+  }
+};
+//发送请求
+pm.sendRequest(regRequest, function (err, res) {
+  console.log(err ? err : res.json());  // 响应为JSON格式可以使用res.json()获取到JSON对象
+});
+```
+
+使用pm.sendRequest发送JSON 格式的Post请求：
+```json
+//构造一个登录请求
+const loginRequest = {
+    url: 'http://XXXX',
+    method: "POST",
+    // 默认header是这个？
+    //header: 'Content-Type: application/x-www-form-urlencoded', 
+    body: {
+        mode: 'urlencoded',  // 模式为表单url编码模式
+        urlencoded: 'name=张三&password=123456'
+    }
+};
+
+
+// 发送请求
+pm.sendRequest(loginRequest, function (err, res) {
+    console.log(err ? err : res.text());
+});
+```
+使用pm.sendRequest发送JSON 发送XML格式请求：
+```js
+//构造请求
+const demoRequest = {
+  url: 'http://XXXX',
+  method: 'POST',
+  header: 'Content-Type: application/xml',  // 请求头种指定内容格式
+  body: {
+    mode: 'raw',
+    raw: '<xml>hello</xml>'  // 按文本格式发送xml
+  }
+};
+
+
+//发送请求
+pm.sendRequest(demoRequest, function (err, res) {
+  console.log(err ? err : res.json());
+});
+```
+
+end
 
 ### 引用
 
 1. https://blog.csdn.net/wxy45645645/article/details/102697327
+1. https://blog.csdn.net/henglin/article/details/119621829

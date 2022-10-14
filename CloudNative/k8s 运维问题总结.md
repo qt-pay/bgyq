@@ -4,6 +4,12 @@
 
 https://qingwave.github.io/
 
+### 别人踩的坑
+
+https://izsk.me/2022/01/06/Kubernetes-prombles/
+
+
+
 ### NodePort port被占用
 
 现象：kube-proxy监听的nodeport有可能被主动请求（即本地listen port）占用导致监听失败

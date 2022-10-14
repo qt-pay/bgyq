@@ -698,7 +698,7 @@ end
 
 end
 
-##### 将所有依赖打入jar:cry:
+##### 将所有依赖打入jar:cry::可直接运行的java
 
 The [Shade Plugin](https://maven.apache.org/plugins/maven-shade-plugin/index.html) provides the capability to create uber jars. That is, jars that contains the project's classes as well as the classes from the project's runtime dependencies.
 

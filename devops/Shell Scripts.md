@@ -901,7 +901,7 @@ ${file%%.*}：拿掉第一个 . 及其右边的字符串：/dir1/dir2/dir3/my
 
 end
 
-##### sed and gawk
+#####  gawk
 
 两篇神作： https://aicode.cc/san-shi-fen-zhong-xue-huiawk.html
 
@@ -1022,6 +1022,8 @@ end
 
   end
 
+##### sed
+
 * sed
 
   基础， sed只有在双引号中`"$var_name"`才能引用环境变量。
@@ -1029,13 +1031,13 @@ end
   `sed "s/address: \(.*\)/address: $a/" app.yml`
 
   pattern space and hold space and labels 真是sed的精华。
-  
+
   sed后面的指令是一步步执行的，可以使用label是实现跳转。
-  
+
   sed默认是自动打印出pattern space的，可以通过`-n`、`--quiet`或`--silent`
-  
+
   啧啧，要玩起来sed 首先要关了默认的pattern space的输出。
-  
+
   ```bash
   root@fishong:~# cat /tmp/a.l
   1
@@ -1109,13 +1111,13 @@ end
   2
   1
   ```
-  
+
   end
-  
+
   sed 定界符问题
-  
+
   通常sed 替换操作时使用的是`/regexp/replacement/`，但是当你匹配和替换`http://`就会出现问题。
-  
+
   ```bash
   $ man sed
   ...
@@ -1164,7 +1166,7 @@ end
   sed 在指定行或者匹配行前(insert)后(append)追加内容
 
   - 在匹配内容所在行处追加
-  
+
     ```bash
     ## 在#bbb 行后append lpl
     $ sed -i '/#bbb/a lpl'  /tmp/a.txt 
@@ -1182,7 +1184,7 @@ end
     ```
   end
   - 在指定行处追加
-  
+
     ```bash
       $ sed -i '2 a lol' /tmp/a.txt
       $ cat /tmp/a.txt
@@ -1212,7 +1214,7 @@ end
     ```
   end
   - sed 指定行替换和运算操作
-  
+
     ```bash
     ## metadata 
     $ cat a.txt 
@@ -1247,9 +1249,19 @@ end
 
 - end
   
-  
 
-#####set -- 很棒
+###### sed function
+
+c ：取代， c 的后面可以接字串，这些字串可以取代匹配的字符串
+
+```bash
+# c和""就比较方便,""中可以是使用/ 还不用转义，舒服了
+sed -i /ExecStart/c"ExecStart=/opt/netrestart.sh"   netrestart.service
+```
+
+
+
+##### set -- 很棒
 
 The `set` command (when not setting options) sets the positional parameters。
 
