@@ -160,6 +160,24 @@ VPN具有以下两个基本特征：
 
 BGP/MPLS VPN以隧道的方式解决了在公网中传送私网数据的问题，但传统的BGP/MPLS VPN架构要求每个VPN实例单独使用一个CE与PE相连。
 
+传统的MPLS L3VPN架构要求每个用户站点单独使用一个CE与PE相连。随着用户业务的不断细化和安全需求的提高，一个私有网络内的用户可能需要划分成多个VPN，不同VPN用户间的业务需要完全隔离。此时，为每个VPN单独配置一台CE将加大用户的设备开支和维护成本；而多个VPN共用一台CE，使用同一个路由表项，又无法保证数据的安全性。
+
+
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/pe-ce-1-1.png)
+
+实现方法：
+
+在MCE设备上为不同的VPN创建各自的路由转发表，并绑定到对应的接口(interface)。在接收路由信息时，MCE设备根据接收报文的接口，即可判断该路由信息的来源，并将其维护到对应VPN的路由转发表中。
+
+同时，在PE上也需要将连接MCE的接口与VPN进行绑定，绑定的方式与MCE设备一致。PE根据接收报文的接口判断报文所属的VPN，将报文在指定的隧道内传输。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/pe-ce-1-N.png)
+
+
+
+**MCE功能通过在CE设备上建立VPN实例，为不同的VPN提供逻辑独立的路由转发表和地址空间，使多个VPN可以共享一个CE**。该CE设备称为MCE设备。MCE功能有效地解决了多VPN网络带来的用户数据安全与网络成本之间的矛盾。
+
 ![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/MPLS-L3VPN.png)
 
 随着用户业务的不断细化和安全需求的提高，很多情况下**一个私有网络内的用户需要划分成多个VPN**，不同VPN用户间的业务需要完全隔离。此时，为每个VPN单独配置一台CE将加大用户的设备开支和维护成本；而多个VPN共用一台CE，使用同一个路由表项，又无法保证数据的安全性。
@@ -191,6 +209,17 @@ RT(Route Tagert)：是BGP的扩展团体属性，它分成Import RT和Export RT�
 1.当从VRF表中导出路由时，要用export RT对VRF路由进行标记。
 
 2.当往VRF表中导入路由时，只有所带RT标记与该VRF表中任意一个import RT相符的路由才会被导入到VRF表中。
+
+##### VPN target
+
+MPLS L3VPN使用BGP扩展团体属性——VPN Target（也称为Route Target）来控制VPN路由信息的发布。
+
+VPN Target属性分为如下两类：
+
+* Export Target属性：本地PE从与自己直接相连的站点学习到IPv4路由后，将其转换为VPN-IPv4路由，为VPN-IPv4路由设置Export Target属性并发布给其它PE。
+* Import Target属性：PE在接收到其它PE发布的VPN-IPv4路由时，检查其Export Target属性。只有当此属性与PE上某个VPN实例的Import Target属性匹配时，才把路由加入到该VPN实例的路由表中。
+
+例如：某VPN实例的Import Target包含100:1，200:1和300:1，当收到的路由信息的Export Target为100:1、200:1、300:1中的任意值时，都可以被注入到该VPN实例中。
 
 #### demo
 
@@ -562,8 +591,12 @@ L7 VPN只能针对应用层数据、比如： chrome访问页面、远程到云�
 ##### L3VPN: gre/ipsec
 
 * GRE：不支持加密和身份认证，通常结合IPSec
+
 * IPSec：六边形战士，可单独使用
+
 * MPLS L3 VPN： BGP MPLS VPN
+
+  MPLS L3VPN是一种三层VPN技术，它使用BGP在服务提供商骨干网上发布用户站点的私网路由，使用MPLS在服务提供商骨干网上转发用户站点之间的私网报文，从而实现通过服务提供商的骨干网连接属于同一个VPN、位于不同地理位置的用户站点。
 
 ##### L2VPN
 
@@ -1013,3 +1046,4 @@ L3VPN中部署最为广泛的就是MPLS BGP VPN了，MPLS提供公网隧道的�
 1. https://bbs.huaweicloud.com/blogs/281600
 2. https://www.bilibili.com/video/BV1Eh411179P/?spm_id_from=333.788.recommend_more_video.-1&vd_source=2795986600b37194ea1056cddb9856fa
 3. https://blog.k4nz.com/93455d77477135edab934f318e2d0e60/
+4. https://blog.csdn.net/qq_45959697/article/details/123913729

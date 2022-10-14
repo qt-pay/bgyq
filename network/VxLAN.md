@@ -29,7 +29,129 @@ VXLAN（Virtual eXtensible Local Area Network，虚拟扩展局域网），是�
 
 **VXLAN技术属于大二层Overlay网络技术范畴，是数据中心网络最核心的技术。**
 
+### vsi and vsi-interface and vpn and L3-vni demo:fire:
 
+* vni：VXLAN Network Identitifier，VXLAN 通过VXLAN ID 来标识，其长度为24 比特，VNI是一种类似于VLAN ID的用户标识，一个VNI代表一个租户，属于不同VNI的虚机之间不能直接进行二层通信。
+
+* VSI ：Virtual Switch Instance，虚拟交换实例，VTEP 上为一个 VXLAN 提供二层交换服务的虚拟交换实例。
+
+  在一个VSI下只能创建一个VXLAN。不同VSI下创建的VXLAN，其VXLAN ID不能相同。
+
+  在vsi视图下，通过gateway vsi-instance完成vsi和vsi-interface的绑定。
+
+* vsi-interface：类似于Vlan-Interface，用来处理跨VNI即跨VXLAN的流量。
+
+  多个VXLAN共用一个VSI虚接口时，可以在VSI视图下指定VSI所属的子网网段，通过子网网段判断报文所属的VSI，并在该VSI内转发报文。
+
+  一个VSI只能指定一个网关接口。
+
+* L2 vni： VXLAN Network Identitifier，属于不同VNI的虚机之间不能直接进行二层通信，类似vlan ID
+
+  L2 vxlan tunnel，不需要路由信息，因为vswitch它们上联一个路由器的两个端口，彼此有直连路由，类似下一跳直达，所以不需要查L3 route info。
+
+* L3 vni：不同网段的主机互通需要三层转发，因此需要三层网关学习到主机路由，所以需要路由表。
+
+  vxlan + VRF 不就是vxlan要绑定一个vpn instance
+
+```bash
+# 需要启动L2 VPN功能
+[H3C]vsi test
+The feature L2VPN has not been enabled.
+[H3C]l2vpn enable
+# 创建vsi实例
+[H3C]vsi test
+[H3C-vsi-test]q
+[H3C]display l2vpn vsi
+Total number of VSIs: 1, 0 up, 1 down, 0 admin down
+
+VSI Name                        VSI Index       MTU    State
+test                            0               1500   Down
+
+## 创建vxlan
+[H3C]vsi  test
+[H3C-vsi-test]vxl
+## L2 vni
+[H3C-vsi-test]vxlan 1000
+[H3C-vsi-test-vxlan-1000]q
+[H3C-vsi-test]q
+
+
+## gateway vsi-interface命令用来为VSI指定网关接口。
+### 系统视图
+[h3c]interface Vsi-interface 32000
+[h3c-Vsi-interface32000]dis this
+#
+interface Vsi-interface32000
+#
+return
+
+## 绑定vpn实例
+[h3c-Vsi-interface32000]interface Vsi-interface 32000
+[h3c-Vsi-interface32000]ip bind ?
+  vpn-instance  Specify a VPN instance
+
+## 指定vxlan ID这个是L3 VNI
+[h3c-Vsi-interface32000]l3-vni ?
+  INTEGER<0-16777215>  VXLAN ID
+
+
+# VSI-Interface 24是跨VXLAN转发时用到的接口 
+#　配置VSI虚接口关联L3VNI
+interface Vsi-interface24 
+ description SDN_VRF_VSI_Interface_130
+ ip binding vpn-instance vrf13
+ l3-vni 130 
+
+
+# vsi-interface 25是业务虚机的网关接口
+interface Vsi-interface25
+ description SDN_VSI_Interface_13 
+ ip binding vpn-instance vrf13 
+ # 配置VSI虚接口的IPv4地址
+ ip address 10.1.13.254 255.255.255.0 sub 
+ mac-address 6805-ca21-d6e5 
+
+## 绑定vsi和vsi-interface
+[H3C]vsi  test
+[H3C-vsi-test]gateway Vsi-interface ?
+  <31446,301374>  Vsi-interface interface number
+[H3C-vsi-test]gateway Vsi-interface 32000
+
+## 多个VXLAN共用一个VSI虚接口时，可以在VSI视图下通过本命令指定VSI所属的子网网段，通过子网网段判断报文所属的VSI，并在该VSI内转发报文。
+[H3C]vsi  test
+[H3C-vsi-test] gateway subnet 100.0.10.0 0.0.0.255
+
+
+## 查看vpn实例和evpn route-table
+[h3c]display ip vpn-instance
+  Total VPN-Instances configured : 2
+  VPN-Instance Name               RD                     Create time
+  mgt                                                    2011/01/25 03:03:09
+  7gvkhdobe8ndo0drinpof1s3k       6:301374               2011/01/25 03:03:09
+
+[h3c]display evpn routing-table vpn-instance ?
+  STRING<1-31>               Name of the VPN instance
+  mgt
+  7gvkhdobe8ndo0drinpof1s3k
+
+
+```
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/vpc-混合overlay-流量模型.jpg)
+
+* CVK 1上 vm 1 访问网络overlay下CVK N上的vm 5： vm 5 在 Switch 2上，由于CVK 1上有vm3，所以可以看到Switch 2上的全部路由信息。VM 1 访问 VM 5 的流量就是VM 1先到网关Switch 1 再到路由器 Router 1（因为跨vni，跨子网了），然后到达Switch 2，在Switch 2上查到VM的下一跳是网络Overlay物理Leaf设备，然后下一跳到达Leaf，Leaf对Overlay解封装(应该是VxLAN协议了)，将数据转发给VM5。因为没过GWSwitch还是L2 VxLAN信息。
+
+  因为两个vswitch连接同一个路由器类似直连，下一跳直达了，就不需要路由信息走L3 vxlan了
+
+  PS：如果VM 5在不同的Switch(子网)就要走GWSwitch了。
+
+* CVK 1上VM访问 CVK 3上VM 6： VM 6 在Switch 3上，由于CVK 1上没有Switch 3，需要依靠明显路由的方式找到VM 6了。此时流量要经过GWSwitch即vm 1 --》Switch 1 --》 Router 1 --》 GWSwitch --》 Switch 6 --》 vm6，这时是L3 VxLAN信息。
+
+  即CVK 1上的Router不知道去往VM6的路由了，所以需要走网关去其他的宿主机Router通讯查询，这个网关就是GWSwitch。
+
+  仅当cvk 1上有某个子网下vm时，才会在cvk上生成一个vSwitch
+
+类似Default Route，负责将本地宿主机上一个未知Subnet，信息转发到其他宿主机上的vRouter，来实现两个vm间的通讯
 
 ### Why VxLAN
 
@@ -164,19 +286,13 @@ VXLAN 网络架构的组件有：
 
 4. **VXLAN 隧道**：两个VTEP 之间的点到点逻辑隧道。VTEP 为数据帧封装VXLAN 头、UDP 头和IP 头后，通过VXLAN 隧道将封装后的报文转发给远端VTEP，远端VTEP 对其进行解封装。
 
-5. **Bridge Domain**：同一大二层域，就类似于传统网络中VLAN（虚拟局域网）的概念，只不过在VXLAN网络中，它有另外一个名字，叫做Bridge-Domain，简称BD。不同的BD通过VNI就行区分。通常BD与VNI是1：1的映射关系，这种映射关系是通过在VTEP设备上配置命令行建立起来的
-
-   ```bash
-   bridge-domain 10   //表示创建一个“大二层广播域”BD，其编号为10
-   vxlan vni 5000  //表示在BD 10下，指定与之关联的VNI为5000
-   ```
-
-6. **VSI**：Virtual Switch Instance，虚拟交换实例，VTEP 上为一个 VXLAN 提供二层交换服务的虚拟交换实例。VXLAN ID 和VSI 是一对一的关系，所以每增加一个VXLAN ID的二层网络都要有唯一的VSI实例与之对应。它具有传统以太网交换机的所有功能，包括源MAC地址学习、MAC地址老化、泛洪等。VSI与VXLAN一一对应。
+5. **VSI**：Virtual Switch Instance，虚拟交换实例，VTEP 上为一个 VXLAN 提供二层交换服务的虚拟交换实例。VXLAN ID 和VSI 是一对一的关系，所以每增加一个VXLAN ID的二层网络都要有唯一的VSI实例与之对应。它具有传统以太网交换机的所有功能，包括源MAC地址学习、MAC地址老化、泛洪等。VSI与VXLAN一一对应。
 
    VxLAN的创建必须在vsi视图下面。
 
    ```bash
    # vsi  Configure a Virtual Switch Instance (VSI)
+   # 
    vsi CORE_AGENT_VSI_31446
     # 为vsi指定网关
     # gateway vsi-interface vsi-interface-id
@@ -196,7 +312,7 @@ VXLAN 网络架构的组件有：
 
    
 
-7. **VSI-Interface**（VSI的虚拟三层接口）：类似于Vlan-Interface，用来处理跨VNI即跨VXLAN的流量。VSI-Interface与VSI一一对应，在没有跨VNI流量时可以没有VSI-Interface。
+6. **VSI-Interface**（VSI的虚拟三层接口）：类似于Vlan-Interface，用来处理跨VNI即跨VXLAN的流量。在没有跨VNI流量时可以没有VSI-Interface。
 
    当业务数据绑定到vpn-instance，就是把业务从普通的ipv4网络隔离，接入到vpn专网。
    多个vsi绑定同一个vn-instance就是它们都属于同一个vpn专网。
@@ -219,7 +335,7 @@ VXLAN 网络架构的组件有：
 
    
 
-8. **Tunnel**: 手工关联VXLAN与VXLAN隧道
+7. **Tunnel**: 手工关联VXLAN与VXLAN隧道
 
    | 操作                     | 命令                       | 说明                                                         |
    | ------------------------ | -------------------------- | ------------------------------------------------------------ |
@@ -228,9 +344,20 @@ VXLAN 网络架构的组件有：
    | 进入VXLAN视图            | **vxlan** *vxlan-id*       | -                                                            |
    | 配置VXLAN与VXLAN隧道关联 | **tunnel** *tunnel-number* | 缺省情况下，VXLAN未关联VXLAN隧道VTEP必须与相同VXLAN内的其它VTEP建立VXLAN隧道，并将该隧道与VXLAN关联 |
 
-    
+   ----
 
    
+
+8. （华为交换机）**Bridge Domain**：同一大二层域，就类似于传统网络中VLAN（虚拟局域网）的概念，只不过在VXLAN网络中，它有另外一个名字，叫做Bridge-Domain，简称BD。不同的BD通过VNI就行区分。通常BD与VNI是1：1的映射关系，这种映射关系是通过在VTEP设备上配置命令行建立起来的
+
+   ```bash
+   bridge-domain 10   //表示创建一个“大二层广播域”BD，其编号为10
+   vxlan vni 5000  //表示在BD 10下，指定与之关联的VNI为5000
+   ```
+
+   
+
+
 
 #### 控制平面 control plane：MP-BGP EVPN
 
