@@ -90,6 +90,28 @@ web
 
 gayhub上丰富 ansible资源可以白嫖
 
+### 缓存实现
+
+应该使用了Cache-Aside模式，且通过先更新数据库后删除更新缓存的简单设计来保障数据一致性。
+
+详细的看看代码再说
+
+### JWT认证
+
+正好看下`go-jwt`
+
+主要是为了方便服务横向扩展，如果基于`Cookie+Session`，`Session`只能保存在服务端，无法进行负载均衡。另外通过api访问，jwt可以放在HTTP Header的`Bearer Token`中。
+
+当使用Websocket时，不支持HTTP Header，由于认证统一在中间件中进行，可以通过简单通过`cookie`存储，也可以单独为Websocket配置认证。
+
+JWT不支持取消，可以通过在redis存入黑名单实现。
+
+### 限流设计：怎么排除ws连接?
+
+限流使用了`golang.org/x/time/rate`提供的令牌桶算法，以应对突发流量，可以对单个IP以及Server层面实现请求控制。
+
+需要特别注意的是限流应当区别长连接与短连接，比如`Weave`中实现了容器`exec`接口，通过Websocket登录到容器，不应该影响其他正常请求。
+
 ### go mod tidy错误
 
 `git clone`后，在本地部署项目，执行`go mod tidy`出现错误
@@ -328,3 +350,5 @@ engine.GET("swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 ### 引用
 
 1. https://www.lixueduan.com/posts/go/swagger/
+1. https://blog.csdn.net/sufu1065/article/details/108459758
+1. https://cloud.tencent.com/developer/article/1774867
