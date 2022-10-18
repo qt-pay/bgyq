@@ -146,6 +146,11 @@ end
 
 ### podman
 
+Podman 原来是 CRI-O 项目的一部分，后来被分离成一个单独的项目叫 libpod。Podman 的使用体验和 Docker 类似，不同的是 Podman 没有 daemon。
+
+Podman 比较简单粗暴，它不使用 Daemon，而是直接通过 OCI runtime（默认也是 runc）来启动容器，所以容器的进程是 podman 的子进程。这比较像 Linux 的 fork/exec 模型，而 Docker 采用的是 C/S（客户端/服务器）模型。
+
+
 Container Runtime  is a low-level runtime？
 
 Podman is an open-source, Linux-native tool designed to develop, manage, and run containers and pods under the Open Container Initiative (OCI) standards.

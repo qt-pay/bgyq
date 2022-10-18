@@ -2,6 +2,8 @@
 
 ## 结构体标签
 
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/golang-struct-tag.jpg)
+
 ### 标签定义
 
 Tag是结构体在编译阶段关联到成员的元信息字符串，在运行的时候通过反射的机制读取出来。

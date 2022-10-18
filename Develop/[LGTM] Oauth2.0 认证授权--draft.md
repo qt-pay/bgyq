@@ -83,7 +83,7 @@ oauth2.0 有四种模式分别如下：
 
 说明：基本流程就是拿Authorization Code换Access Token。
 
-每一步必须要参数：
+**每一步必须要参数：**
 
 1. 首先你得拥有属于自己应用对应的 appkey、appsecret 分别对应 OAuth2.0 中的 client_id 与client_secret，可能一些服务端会扩展一些其他的名称。并设置好你自己的 redirect_uri 跳转回调地址，用于通知给你code码，还可以设置好 state附带返回参数，scope授权范围.
 2. 当你拿到code后，就可以换取access_token了。一般都必须返回至少三个参数：refresh_token、access_token、expires_in
@@ -175,7 +175,37 @@ Basically, JWT is a token format.
 
 OAuth is an standardised **authorization** protocol that can use JWT as a token.
 
-#### jwt app demo：清下缓存再试下
+#### jwt app demo：注意cookie设置地方
+
+server端设置cookie 和client端设置cookie类似，不同的是 server端用的是`http.SetCookie`, 而client端用的是`req.AddCookie`
+
+```go
+// 设置在client端
+req.AddCookie(&http.Cookie{
+	Name:    "clientcookieid2",
+	Value:   "id2",
+	Expires: time.Now().Add(111 * time.Second),
+})
+
+// 设置在Server端
+http.SetCookie(w, &http.Cookie{
+	Name:    "servercookie",
+	Value:   "servercookievalue",
+	Expires: time.Now().Add(111 * time.Second),
+})
+```
+
+下面简单的demo是将cookie设置在Server端的
+
+当Client在header中指定cookie时，会覆盖Server端设置的cookie。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/jwt-login-1.jpg)
+
+client故意使用过期的Cookie
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/jwt-login-2.jpg)
+
+
 
 ```go
 package main

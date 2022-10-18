@@ -879,6 +879,228 @@ end
 
 ### tracing
 
+### JWT
+
+JWT就是一种基于Token的轻量级认证模式，服务端认证通过后，会生成一个JSON对象，经过签名后得到一个Token（令牌）再发回给用户，用户后续请求只需要带上这个Token，服务端解密之后就能获取该用户的相关信息了。
+
+##### why not cookie-session？
+
+通常使用的是Cookie-Session的认证方式。大致的流程如下：
+
+1. 用户使用用户名个密码登录，发送信息到服务器。
+2. 服务器拿到用户的信息，后会生成一份保存用户信息的session数据和与之对应的cookie id，然后保存session在在服务器，把对应的session id返回给用户并保存在浏览器。
+3. 后续来自该用户的每次请求都会携带相应的cookie。
+4. 服务端通过带来的cookie找到之前保存的与之对应的用户信息。
+
+那么这种方式有什么弊端呢？
+
+- 不支持跨域
+- 通过数据库查询响应的用户信息耗时
+- CSRF攻击(跨站伪造请求)
+
+#### 生成token
+
+```go
+type MyClaims struct {
+   Username string `json:"username"`
+   jwt.StandardClaims
+}
+
+// 定义过期时间
+const TokenExpireDuration = time.Hour * 2
+
+//定义secret
+var MySecret = []byte("这是一段用于生成token的密钥")
+
+//生成jwt
+func GenToken(username string) (string, error) {
+   c := MyClaims{
+      username,
+      jwt.StandardClaims{
+         ExpiresAt: time.Now().Add(TokenExpireDuration).Unix(),
+         Issuer:    "my-project",
+      },
+   }
+   //使用指定的签名方法创建签名对象
+   token := jwt.NewWithClaims(jwt.SigningMethodHS256, c)
+
+   //使用指定的secret签名并获得完成的编码后的字符串token
+   return token.SignedString(MySecret)
+}
+
+```
+
+
+
+#### 解析and认证token
+
+函数签名
+
+```go
+func ParseWithClaims(tokenString string, claims Claims, keyFunc Keyfunc) (*Token, error) {
+	return new(Parser).ParseWithClaims(tokenString, claims, keyFunc)
+}
+
+// Parse methods use this callback function to supply
+// the key for verification.  The function receives the parsed,
+// but unverified Token.  This allows you to use properties in the
+// Header of the token (such as `kid`) to identify which key to use.
+type Keyfunc func(*Token) (interface{}, error)
+
+```
+
+demo
+
+```go
+
+//解析JWT
+func ParseToken(tokenString string) (*MyClaims, error) {
+   //解析token
+   token, err := jwt.ParseWithClaims(tokenString, &MyClaims{}, func(token *jwt.Token) (i interface{}, err error) {
+      return MySecret, nil
+   })
+   if err != nil {
+      return nil, err
+   }
+   // token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+ //   return []byte("<YOUR VERIFICATION KEY>"), nil
+//})
+   if claims, ok := token.Claims.(*MyClaims); ok && token.Valid {
+      return claims, nil
+   }
+   return nil, errors.New("invalid token")
+}
+```
+
+end
+
+#### gin and jwt
+
+##### 生成jwt
+
+两个接口一个生成jwt并创建cookies保存，一个验证jwt
+
+```go
+func authHandler(c *gin.Context) {
+	// 用户发送用户名和密码过来
+	var user UserInfo
+	err := c.ShouldBind(&user)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"code": 2001,
+			"msg":  "无效的参数",
+		})
+		return
+	}
+	// 校验用户名和密码是否正确
+	if user.Username == "test" && user.Password == "foo" {
+		// 生成Token
+		tokenString, _ := GenToken(user.Username)
+		c.JSON(http.StatusOK, gin.H{
+			"code": 2000,
+			"msg":  "success",
+			"data": gin.H{"token": tokenString},
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"code": 2002,
+		"msg":  "鉴权失败",
+	})
+	return
+}
+```
+
+end
+
+##### 注入jwt中间件：前端配合？？？:heavy_exclamation_mark:
+
+是不是少了一个中间件，每次请求的时候将token注入到client请求？？？
+
+B/S 架构client怎么加入jwt
+
+**客户端收到服务器返回的 JWT，可以储存在 Cookie 里面，也可以储存在 localStorage。**
+
+> 前端检测有这个token自动带上去？？？
+>
+> 前端存的超时时间应该和token超时时间一样
+
+此后，客户端每次与服务器通信，都要带上这个 JWT。你可以把它放在 Cookie 里面自动发送，但是这样不能跨域，所以更好的做法是放在 HTTP 请求的头信息`Authorization`字段里面。
+
+> ```javascript
+> Authorization: Bearer <token>
+> ```
+
+另一种做法是，跨域的时候，JWT 就放在 POST 请求的数据体里面。
+
+通常客户端传输 JWT 是通过 header 中的 **Authorization** 字段，好处是避免了 [CORS](https://developer.mozilla.org/en-US/docs/Glossary/CORS)攻击。并且使用 **Bearer** 模式。
+
+
+
+##### 验证中间件
+
+用户通过上面的接口获取Token之后，后续就会携带着Token再来请求我们的其他接口，这个时候就需要对这些请求的Token进行校验操作了，很显然我们应该实现一个检验Token的中间件，具体实现如下：
+
+```go
+// JWTAuthMiddleware 基于JWT的认证中间件
+func JWTAuthMiddleware() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		// 客户端携带Token有三种方式 1.放在请求头 2.放在请求体 3.放在URI
+		// 这里假设Token放在Header的Authorization中，并使用Bearer开头
+		// 这里的具体实现方式要依据你的实际业务情况决定
+		authHeader := c.Request.Header.Get("Authorization")
+		if authHeader == "" {
+			c.JSON(http.StatusOK, gin.H{
+				"code": 2003,
+				"msg":  "请求头中auth为空",
+			})
+			c.Abort()
+			return
+		}
+		// 按空格分割
+		parts := strings.SplitN(authHeader, " ", 2)
+		if !(len(parts) == 2 && parts[0] == "Bearer") {
+			c.JSON(http.StatusOK, gin.H{
+				"code": 2004,
+				"msg":  "请求头中auth格式有误",
+			})
+			c.Abort()
+			return
+		}
+		// parts[1]是获取到的tokenString，我们使用之前定义好的解析JWT的函数来解析它
+		mc, err := ParseToken(parts[1])
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"code": 2005,
+				"msg":  "无效的Token",
+			})
+			c.Abort()
+			return
+		}
+		// 将当前请求的username信息保存到请求的上下文c上
+		c.Set("username", mc.Username)
+		c.Next() // 后续的处理函数可以用过c.Get("username")来获取当前请求的用户信息
+	}
+}
+```
+
+##### 验证接口
+
+```go
+r.GET("/home", JWTAuthMiddleware(), homeHandler)
+
+func homeHandler(c *gin.Context) {
+	username := c.MustGet("username").(string)
+	c.JSON(http.StatusOK, gin.H{
+		"code": 2000,
+		"msg":  "success",
+		"data": gin.H{"username": username},
+	})
+}
+```
+
+
+
 
 
 ### goroutine pool
@@ -915,3 +1137,5 @@ fasthttp 当前维护者的观点
 4. https://juejin.cn/post/7120039561538830367
 5. https://medium.com/@wattanai.tha/go-tutorial-series-ep-1-building-rest-api-with-gin-7c17c7ab1d5b
 6. https://cloud.tencent.com/developer/article/1579400
+7. https://juejin.cn/post/7093035836689612836
+8. https://www.liwenzhou.com/posts/Go/jwt_in_gin/
