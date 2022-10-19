@@ -391,6 +391,34 @@ JavaScript
 
 In the above program, we import the lib package and call the exported methods provided by the lib package.
 
+#### package 内直接共享变量
+
+同一个package下的不同go file，可以共享变量(一个package中的全局变量)
+
+如下，只要保证初始化变量的function 优先于 引用变量的function执行就行了。
+
+```go
+// server.go
+package server
+var tokenSecret string
+...
+
+func (server *Server) Run(ctx context.Context, options ...RunOption) error {
+	tokenSecret = server.options.Port
+}
+
+// handlers.go
+// server.Run()之后才会根据请求生成调用handlers.processWSConn()
+package server
+...
+func (server *Server) processWSConn(ctx context.Context, conn *websocket.Conn) error {
+    log.Println("default jwt secret:", tokenSecret)
+    // JWT verify with secret
+}
+```
+
+end
+
 #### non-main package
 
 The `package main` tells the Go compiler that the package should compile as an executable program instead of a shared library. 

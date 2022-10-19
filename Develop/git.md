@@ -17,6 +17,39 @@ user.name=chandler
 user.email=chandler@bgyq.com
 ```
 
+### 修改上次以提交的commit
+
+```bash
+## commit id 是上次提交的 commit id
+$ git rebase -i ceccc
+Stopped at 823affa...  gotty 101
+## 按照下面提示操作即可
+You can amend the commit now, with
+
+  git commit --amend
+
+Once you are satisfied with your changes, run
+
+  git rebase --continue
+
+## 输入新的commit message
+$ git commit --amend --message="2022-10-18: gotty 101"
+[detached HEAD cb4df21] 2022-10-18: gotty 101
+ Date: Tue Oct 18 23:32:47 2022 +0800
+ 6 files changed, 415 insertions(+), 2 deletions(-)
+ create mode 100644 Develop/[LGTM] Golang gotty--web console.md
+ create mode 100644 "Develop/golang/Golang Temporal \345\210\206\345\270\203\345\274\217\344\273\273\345\212\241\350\260\203\345\272\246\346\241\206\346\236\266.md"
+# 
+(main|REBASE 1/1)$  git rebase --continue
+Successfully rebased and updated refs/heads/main.
+
+w25506@w25506 MINGW64 /d/data_files/bgyq/bgyq (main)
+# 需要强制push
+$ git push -f
+
+
+```
+
 
 
 ### 远程仓库重命名

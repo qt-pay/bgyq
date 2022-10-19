@@ -237,7 +237,30 @@ cellnet.a
 
 #### version 2：Godep && Vendor等等
 
-空白？？？哈哈哈
+**Vendor** 目录是 Golang 从 1.5 版本开始引入的，为项目开发提供了一种离线保存第三方依赖包的方法。
+
+在执行 `go build` 或 `go run` 命令时，会按照以下顺序去查找包：
+
+- 当前包下的 vendor 目录
+- 向上级目录查找，直到找到 src 下的 vendor 目录
+- 在 GOROOT 目录下查找
+- 在 GOPATH 下面查找依赖包
+
+基于Vendor的包管理工具很多
+
+主要是一下三个工具：
+
+##### godep
+
+`godep` 通过 `godep save` 把第三包的版本依赖信息记录在`Godeps.json`下，并且把第三包完整拷贝一份到`vendor`下面。通过对 `Godeps.json` 文件进行版本管理即可以管理整个项目的第三方包依赖信息。
+
+##### govendor
+
+`govendor init`之后会在根目录下生成一个`vendor`文件夹。只需要对`vendor/vendor.json`进行版本控制，即可对第三包依赖关系进行控制。
+
+##### glide
+
+`glide` 通过`glide create`或`glide init`命令初始化第三方包管理，会在项目根目录下生成一个`glide.yaml`，这个文件记录用到的第三方包的依赖关系，支持编辑修改。 `glide`通过`glide install`, 会把所有缺少的第三方包都下载到`vendor`文件夹下，并且会在`glide.yaml`中添加所有依赖的第三方包名称，在`glide.lock`文件中记录具体的版本管理信息。
 
 #### version 3：go mod:+1:
 
@@ -465,7 +488,7 @@ go mod可能都N个模块依赖一个包事，为了避免冲突，go mod 帮我
 
 对 `github.com/envoyproxy/go-control-plane` 有依赖的也就只有 mosn，只要 replace 就好
 
-#### go mod tidy：重要
+#### go mod tidy：重要，配合go get -d
 
 构建过程会更新go.mod文件(在执行go get、go build、 go test、 go list等命令时都会根据需要的依赖自动和更新require语句)
 
@@ -563,6 +586,74 @@ pb: ## Copy mcube protobuf files to common/pb
 ```
 
 end
+
+### go get and go install
+
+在后续版本（计划是 Go 1.17）中删掉 `go get` 安装二进制的功能，接下来 `go get` 的行为就等同于我们现在执行 `go get -d` 命令了，仅需下载源码，并将依赖添加至 `go.mod` 即可。
+
+1. go get 即将废弃，会修改本地go.mod
+
+2. go get -d（后面将默认参数 d，只是下载 download）
+
+3. 推荐使用 go install,需要带版本
+
+   * 在模块外，不带 `@version` 是无法安装的，会有如下错误:
+
+     go install: version is required when current directory is not in a module
+
+   * 如果你在模块目录中，并且你不带 `@version` 执行安装的话，只能安装 `go.mod` 中已经包含的版本。并且不能安装未出现在 `go.mod` 中的包。
+
+```bash
+# 在go module外执行go install 不带版本会报错
+$ go install github.com/tools/godep
+go install: version is required when current directory is not in a module
+        Try 'go install github.com/tools/godep@latest' to install the latest version
+
+
+$  mkdir -p /go/src/test
+$ cd /go/src/test
+# 初始化模块
+$ go mod init
+go: creating new go.mod: module test
+$ cat go.mod 
+module test
+
+go 1.16
+
+
+# 不带 @version 无法安装
+$ go install -v sigs.k8s.io/kind
+no required module provides package sigs.k8s.io/kind; try 'go get -d sigs.k8s.io/kind' to add it
+
+# 用 go get -d 下载
+$ go get -d sigs.k8s.io/kind
+go get: added sigs.k8s.io/kind v0.9.0
+
+# 可以看到已经被添加到了模块依赖中
+# 自动添加依赖到go.mod，有危险？
+$ cat go.mod 
+module test
+
+go 1.16
+
+require sigs.k8s.io/kind v0.9.0 // indirect
+
+# 删除本地的 kind 工具
+$ which kind
+/go/bin/kind
+$ rm /go/bin/kind
+
+# 不带 @version 进行安装
+$ go install -v sigs.k8s.io/kind
+$ which kind
+/go/bin/kind
+$ kind version
+kind v0.9.0 go1.16beta1 linux/amd64
+```
+
+`go install` 不会修改 `go.mod` 之类的文件，不会造成任何意外。
+
+`go get` 将二进制安装相关的功能都转移到了 `go install`, 仅作为用于编辑 `go.mod` 文件的命令存在（go 1.16）。
 
 ### go mod实践
 
@@ -696,7 +787,7 @@ replace test-server => ../test-server // 指定需要的包目录去后面这个
 
 
 
-#### go mod vendor and download：第三方库
+#### go mod vendor and download：第三方库:cloud_with_lightning:
 
 go mod vendor将引入的第三方库自动加到go.mod，并将依赖拷贝到当前的vendor目录。
 
@@ -755,3 +846,8 @@ go.sum同时还会保留过去使用的包的版本信息，以便日后可能�
 https://github.com/golang/go/wiki/Modules#faqs--gomod-and-gosum
 
 `go.sum` contains the expected cryptographic checksums of the content of specific module versions.
+
+### 引用
+
+1. https://blog.kelu.org/tech/2021/04/12/go-compile-command-remark.html
+2. https://liqiang.io/post/go-get-vs-go-install-2d42f6d0

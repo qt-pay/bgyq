@@ -421,6 +421,89 @@ func MysqlInit() (err error) {
 
 end
 
+### ORM and DAO and Repository？？？
+
+其实想讨论下 到底 数据库相关操作怎么规划目录
+
+Dao and Repository 写法
+
+ https://github.com/dushixiang/next-terminal
+
+开源项目，除了module层（定义数据结构），还分了 service 层和 repository 层，repository 主要是用来操作某一个表的，例如根据 ID 查询可能会很多地方用到，repository 可以写一个 FindById 函数，参数是 ID，返回是数据库表的结构体，这样就不必每次都去拿全局 DB.Where("id = ?", id).First(&User{}) 查询了，也更方便检索有哪些地方用了这个函数。
+
+service 层主要也是写一个会复用到的函数，不复用的直接就用 repository 操作了。
+
+```go
+// module package
+package model
+
+import (
+	"next-terminal/server/utils"
+)
+
+type Job struct {
+	ID          string         `gorm:"primary_key,type:varchar(36)" json:"id"`
+	...
+	Updated     utils.JsonTime `json:"updated"`
+}
+
+func (r *Job) TableName() string {
+	return "jobs"
+}
+
+// repository package
+
+package repository
+...
+
+type jobRepository struct {
+	baseRepository
+}
+
+func (r jobRepository) Find(c context.Context, pageIndex, pageSize int, name, status, order, field string) (o []model.Job, total int64, err error) {
+	...
+	return
+}
+
+func (r jobRepository) FindAll(c context.Context) (o []model.Job, err error) {
+	db := r.GetDB(c)
+	err = db.Find(&o).Error
+	return
+}
+
+// service package
+package service
+
+type jobService struct {
+}
+
+func (r jobService) ChangeStatusById(id, status string) error {
+	...
+}
+
+func getJob(j *model.Job) (job cron.Job, err error) {
+	switch j.Func {
+	case constant.FuncCheckAssetStatusJob:
+		job = CheckAssetStatusJob{
+			ID:          j.ID,
+			Mode:        j.Mode,
+			ResourceIds: j.ResourceIds,
+			Metadata:    j.Metadata,
+		}
+	case constant.FuncShellJob:
+		job = ShellJob{ID: j.ID, Mode: j.Mode, ResourceIds: j.ResourceIds, Metadata: j.Metadata}
+	default:
+		return nil, errors.New("未识别的任务")
+	}
+	return job, err
+}
+
+
+
+```
+
+
+
 ### json渲染？
 
 #### `gin.H{}`

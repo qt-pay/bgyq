@@ -56,6 +56,70 @@ Now time: 2022-06-17 12:29:53
 
 刚好是 1 2 3 4 5 6 7，据此进行变化即可。
 
+### log and fmt package
+
+#### fmt线程不安全
+
+**直接点说,就是由于fmt 是线程不安全的, 如果你在多协程场景下使用fmt打印信息可能会得到乱序的结果** 就是说 不按代码里的顺序打印.
+
+```go
+func main()  {
+	wg := sync.WaitGroup{}
+	wg.Add(10)
+	var arr []int
+
+	for i:=0;i<10;i++ {
+		go func(i int) {
+			defer wg.Done()
+			arr = append(arr, i)
+			log.Printf("i: %d",i)
+		}(i)
+	}
+	wg.Wait()  // 隔离
+	s :=0
+	for _, v := range arr{
+		fmt.Println(v)
+		s += v
+	}
+	log.Println("s=",s)
+
+}
+
+// output
+2022/10/19 17:19:15 i: 8
+2022/10/19 17:19:15 i: 2
+2022/10/19 17:19:15 i: 9
+2022/10/19 17:19:15 i: 4
+2022/10/19 17:19:15 i: 5
+2022/10/19 17:19:15 i: 6
+2022/10/19 17:19:15 i: 7
+2022/10/19 17:19:15 i: 0
+2022/10/19 17:19:15 i: 1
+2022/10/19 17:19:15 i: 3
+2022/10/19 17:19:15 s= 45
+// fmt.Println()输出的顺序就挺离谱
+1
+9
+4
+5
+6
+7
+8
+2
+3
+
+```
+
+end
+
+#### fmt默认不带输出时间
+
+一个很大的项目有很多的输出信息，要是输出信息前面没有加上日期的话，debug起来几乎是难以想象的，因为不可能一直盯着屏幕来对信息进行监控。
+
+#### fmt不方便转存文件
+
+log方便对日志信息进行转存，形成日志文件。
+
 ### log format demo
 
 #### error log要全面
@@ -1600,3 +1664,5 @@ https://www.liwenzhou.com/posts/Go/use_zap_in_gin/#autoid-0-0-1
 2. https://cloud.tencent.com/developer/article/1811437
 3. https://tehub.com/a/3RsRiVgWHc
 4. https://www.liwenzhou.com/posts/Go/use_zap_in_gin/#autoid-0-0-1
+5. https://zhuanlan.zhihu.com/p/85656252
+6. https://cnblogs.com/Goden/p/4620136.html
