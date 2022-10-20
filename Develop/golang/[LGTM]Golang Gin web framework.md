@@ -4,7 +4,7 @@
 
 https://medium.com/search?q=gin+101
 
-
+还是依赖`net/http`实现listen port
 
 
 
@@ -142,7 +142,8 @@ func main() {
     router.POST("/grocery", grocery.PostGrocery)
     router.PUT("/grocery/:id", grocery.UpdateGrocery)
     router.DELETE("/grocery/:id", grocery.DeleteGrocery)
-
+	// err = http.ListenAndServe(address, engine.Handler())
+    // Gin 还是使用了net/http包实现了listen
     log.Fatal(router.Run(":10000"))
 }
 
@@ -304,7 +305,7 @@ func main() {
 
 
 
-### ORM
+### ORM： gorm
 
 https://gorm.io/docs/
 
@@ -329,6 +330,273 @@ As defined in the MySQL Glossary:
 
 
 Some other database products draw a distinction. For example, in the Oracle Database product, a schema represents only a part of a database: the tables and other objects owned by a single user.
+
+#### gorom 数据库连接池???
+
+连接池的意义是减少数据库连接时的消耗，
+
+app 操作数据库需要如下步骤包括：
+
+* TCP 三次握手
+* SSL验证
+* 执行SQL语句
+* 维持长连接 or 释放连接（短链接，四次挥手也是消耗）
+
+显然使用短链接，每次执行sql的消耗太多了
+
+连接池化，就是维持一个长连接（异步），有sql需要执行时，从连接池中取一个空闲连接去执行SQL即可。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/database-pool.jfif)
+
+
+
+
+
+Is a new connection pool created every time I call it or is each call to `gorm.Open()` sharing the same connection pool?
+
+**TLDR:** yes, try to reuse the returned DB object.
+
+[gorm.Open](https://github.com/jinzhu/gorm/blob/v1.9.12/main.go#L58) does the following: (more or less):
+
+1. lookup the driver for the given dialect
+2. call `sql.Open` to return a `DB` object
+3. call `DB.Ping()` to force it to talk to the database
+
+This means that one `sql.DB` object is created for every `gorm.Open`. Per the [doc](https://golang.org/pkg/database/sql/#DB), **this means one connection pool for each DB object.**
+
+The returned DB is safe for concurrent use by multiple goroutines and maintains its own pool of idle connections. **Thus, the Open function should be called just once.** It is rarely necessary to close a DB.
+
+```go
+// Open initialize a new db connection, need to import driver first, e.g:
+//
+//     import _ "github.com/go-sql-driver/mysql"
+//     func main() {
+//       db, err := gorm.Open("mysql", "user:password@/dbname?charset=utf8&parseTime=True&loc=Local")
+//     }
+// GORM has wrapped some drivers, for easier to remember driver's import path, so you could import the mysql driver with
+//    import _ "github.com/jinzhu/gorm/dialects/mysql"
+//    // import _ "github.com/jinzhu/gorm/dialects/postgres"
+//    // import _ "github.com/jinzhu/gorm/dialects/sqlite"
+//    // import _ "github.com/jinzhu/gorm/dialects/mssql"
+func Open(dialect string, args ...interface{}) (db *DB, err error) {
+	if len(args) == 0 {
+		err = errors.New("invalid database source")
+		return nil, err
+	}
+	var source string
+	var dbSQL SQLCommon
+	var ownDbSQL bool
+
+	switch value := args[0].(type) {
+	case string:
+		var driver = dialect
+		if len(args) == 1 {
+			source = value
+		} else if len(args) >= 2 {
+			driver = value
+			source = args[1].(string)
+		}
+		dbSQL, err = sql.Open(driver, source)
+		ownDbSQL = true
+	case SQLCommon:
+		dbSQL = value
+		ownDbSQL = false
+	default:
+		return nil, fmt.Errorf("invalid database source: %v is not a valid type", value)
+	}
+
+	db = &DB{
+		db:        dbSQL,
+		logger:    defaultLogger,
+		callbacks: DefaultCallback,
+		dialect:   newDialect(dialect, dbSQL),
+	}
+	db.parent = db
+	if err != nil {
+		return
+	}
+	// Send a ping to make sure the database connection is alive.
+	if d, ok := dbSQL.(*sql.DB); ok {
+		if err = d.Ping(); err != nil && ownDbSQL {
+			d.Close()
+		}
+	}
+    // return db object
+	return
+}
+
+```
+
+end
+
+##### 同步连接池(线程)：两个线程池，业务线程池不阻塞，将执行sql的阻塞转移到数据库连接线程池
+
+项目启动的时候，提前创建连接池，web项目在http server启动前，初始化db并配置好db连接池。
+
+同步连接池：
+
+* 业务线程获取连接池中数据库线程
+* 数据库执行sql，此时数据库线程是阻塞的
+* "释放"数据库连接，将执行完sql的线程，放回DB 线程池
+
+###### 2n+2线程数
+
+一个同步连接池中应该有多少个线程呢？
+
+eg，一个8核CPU的服务器，同步连接池初始化线程是多少？
+
+通常从 `2n+2`即18，开始压测数据库连接QPS，递增线程数，直到最优线程数。
+
+因为，同步连接在执行IO操作时会阻塞，所以会启用两倍的线程数，又因为IO时间不定通常再加2个线程。
+
+##### 单个异步连接:线程
+
+异步连接，不会阻塞当前操作线程。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/sync-and-async-db-connect.jpg)
+
+有人测试了，一条异步连接的性能约等于整个同步连接池的性能。
+
+但是异步连接实现比较麻烦：
+
+* 创建一个非阻塞的连接
+* 接入数据库的协议，如果数据库本身提供了异步连接库，则可以直接使用
+* 应用是事件框架监听数据库事件，完成回调。
+
+##### 异步连接池：协程，异步转同步:six:
+
+异步事件监听和回调挺麻烦的（包括上下文的保存），协程的好处就是可以把线程的异步调用转成协程的切换即不需要外部的事件监听框架和回调函数？？？
+
+纯代码控制的用户态协程切换很快
+
+是这样？？？
+
+一个协程可以在等待redis IO时，让出协程继续执行mysql调用。但是每个协程确实占用了一个同步的redis和mysql线程，所以mysql和redis还是需要同步线程池的。
+
+协程将异步回调转换成线程内协程的切换。
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/协程-异步.jpg)
+
+
+
+
+
+##### 单实例db instance
+
+每个gorm的Open操作都会返回一个database instance，而每个db instance都会有一个db connect pool。这就意味这在multi goroutines场景下要保障gorm Open只执行一次。
+
+在web server情况下，只需要在http server启动时仅运行一次gorm Open即可
+
+```go
+package model
+ 
+import (
+    "fmt"
+    "sync"
+    "errors"
+ 
+    orm "github.com/jinzhu/gorm"
+    _ "github.com/jinzhu/gorm/dialects/mysql"
+    "github.com/spf13/viper"
+)
+ 
+type MySqlPool struct {}
+ 
+var instance *MySqlPool
+var once sync.Once
+ 
+var db *orm.DB
+var err error 
+ 
+// 单例模式
+func GetInstance() *MySqlPool {
+    once.Do(func() {
+        instance = &MySqlPool{}
+    })
+ 
+    return instance
+}
+ 
+func (pool *MySqlPool) InitPool() (isSuc bool) {
+    dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?charset=%s", viper.GetString("db.username"), viper.GetString("db.password"), viper.GetString("db.host"), viper.GetString("db.name"), viper.GetString("db.charset"))
+    db, err = orm.Open("mysql", dsn)
+    if err != nil {
+        panic(errors.New("mysql连接失败"))
+        return false
+    }
+ 
+    // 连接数配置也可以写入配置，在此读取
+    db.DB().SetMaxIdleConns(50)
+    db.DB().SetMaxOpenConns(50)
+    // db.LogMode(true)
+    return true
+}
+```
+
+end
+
+##### sql.DB: pool
+
+https://www.alexedwards.net/blog/configuring-sqldb
+
+A `sql.DB` object is a *pool of many database connections* which contains both 'in-use' and 'idle' connections. A connection is marked as in-use when you are using it to perform a database task, such as executing a SQL statement or querying rows. When the task is complete the connection is marked as idle.
+
+
+
+```go
+// DB is a database handle representing a pool of zero or more
+// underlying connections. It's safe for concurrent use by multiple
+// goroutines.
+//
+// The sql package creates and frees connections automatically; it
+// also maintains a free pool of idle connections. If the database has
+// a concept of per-connection state, such state can be reliably observed
+// within a transaction (Tx) or connection (Conn). Once DB.Begin is called, the
+// returned Tx is bound to a single connection. Once Commit or
+// Rollback is called on the transaction, that transaction's
+// connection is returned to DB's idle connection pool. The pool size
+// can be controlled with SetMaxIdleConns.
+type DB struct {
+	// Atomic access only. At top of struct to prevent mis-alignment
+	// on 32-bit platforms. Of type time.Duration.
+	waitDuration int64 // Total time waited for new connections.
+
+	connector driver.Connector
+	// numClosed is an atomic counter which represents a total number of
+	// closed connections. Stmt.openStmt checks it before cleaning closed
+	// connections in Stmt.css.
+	numClosed uint64
+
+	mu           sync.Mutex    // protects following fields
+	freeConn     []*driverConn // free connections ordered by returnedAt oldest to newest
+	connRequests map[uint64]chan connRequest
+	nextRequest  uint64 // Next key to use in connRequests.
+	numOpen      int    // number of opened and pending open connections
+	// Used to signal the need for new connections
+	// a goroutine running connectionOpener() reads on this chan and
+	// maybeOpenNewConnections sends on the chan (one send per needed connection)
+	// It is closed during db.Close(). The close tells the connectionOpener
+	// goroutine to exit.
+	openerCh          chan struct{}
+	closed            bool
+	dep               map[finalCloser]depSet
+	lastPut           map[*driverConn]string // stacktrace of last conn's put; debug only
+	maxIdleCount      int                    // zero means defaultMaxIdleConns; negative means 0
+	maxOpen           int                    // <= 0 means unlimited
+	maxLifetime       time.Duration          // maximum amount of time a connection may be reused
+	maxIdleTime       time.Duration          // maximum amount of time a connection may be idle before being closed
+	cleanerCh         chan struct{}
+	waitCount         int64 // Total number of connections waited for.
+	maxIdleClosed     int64 // Total number of connections closed due to idle count.
+	maxIdleTimeClosed int64 // Total number of connections closed due to idle time.
+	maxLifetimeClosed int64 // Total number of connections closed due to max connection lifetime limit.
+
+	stop func() // stop cancels the connection opener.
+}
+
+```
+
+
 
 #### go-gorm demo
 
@@ -416,6 +684,34 @@ func MysqlInit() (err error) {
    sqlDB.SetConnMaxLifetime(time.Hour)
    //defer sqlDB.Close()
    return err
+}
+```
+
+end
+
+#### 软删除
+
+gorm天然支持软删除. 只需要在表字段添加"DeletedAt" 字段, 字段类型为*time.Time,字段可为NULL,可为nil.
+
+```go
+package module
+
+type BaseModel struct {
+	CreatedAt time.Time      `json:"createdAt"`
+	UpdatedAt time.Time      `json:"updatedAt"`
+	DeletedAt gorm.DeletedAt `json:"-"` // soft delete
+}
+
+type User struct {
+	ID        uint       `json:"id" gorm:"autoIncrement;primaryKey"`
+	Name      string     `json:"name" gorm:"size:100;not null;unique"`
+	Password  string     `json:"-" gorm:"size:256;"`
+	Email     string     `json:"email" gorm:"size:256;"`
+	Avatar    string     `json:"avatar" gorm:"size:256;"`
+	AuthInfos []AuthInfo `json:"authInfos" gorm:"foreignKey:UserId;references:ID"`
+	Groups    []Group    `json:"groups" gorm:"many2many:user_groups;"`
+
+	BaseModel
 }
 ```
 
@@ -1222,3 +1518,6 @@ fasthttp 当前维护者的观点
 6. https://cloud.tencent.com/developer/article/1579400
 7. https://juejin.cn/post/7093035836689612836
 8. https://www.liwenzhou.com/posts/Go/jwt_in_gin/
+9. https://stackoverflow.com/questions/61822921/does-gorm-open-create-a-new-connection-pool-every-time-its-called
+10. https://blog.csdn.net/weixin_39902875/article/details/112098338
+11. https://www.bilibili.com/video/BV12F411z7uP/?spm_id_from=333.337.search-card.all.click&vd_source=2795986600b37194ea1056cddb9856fa

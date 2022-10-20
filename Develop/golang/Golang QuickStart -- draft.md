@@ -904,6 +904,45 @@ s_new = s_new.append(s_new, s_more...)
 
 
 
+### 变量声明
+
+#### global variables
+
+A global variable refers to a variable that is defined outside a function. Global variables can be accessed throughout the program or within any function in the defined package.
+
+全局变量只能使用`var`来声明，不能使用语法糖`:=`
+
+![](https://image-1300760561.cos.ap-beijing.myqcloud.com/bgyq-blog/global-var-golang.jpg)
+
+#### local variable
+
+局部变量可以使用下面方式声明变量
+
+* var : 可以显示声明类型再赋值，也可以直接初始化`var a=3`
+* `:=`
+
+```go
+import (
+	"fmt"
+	//"time"
+)
+
+var a = "a"
+func main()  {
+	// 建议规范声明
+    // var b int
+    // b = 1
+	var b = 1
+	c := 2
+	fmt.Println(a)
+	fmt.Println(b)
+	fmt.Println(c)
+}
+
+```
+
+
+
 ### 内置数据类型
 
 golang 所有的类型数据都有一个pair(type, value) ，这就是反射的实现。
